@@ -15,6 +15,8 @@
 namespace {
 
 struct ShaderConstants {
+	float width;
+	float height;
 	float time;
 };
 
@@ -339,7 +341,7 @@ int main() {
 
 		VkPipelineInputAssemblyStateCreateInfo assembly_state_info{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-			.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+			.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_STRIP,
 		};
 
 		VkPipelineRasterizationStateCreateInfo raster_info{
@@ -485,13 +487,15 @@ int main() {
 			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
 
 			ShaderConstants consts{
+				.width = window_default_width,
+				.height = window_default_height,
 				.time = time,
 			};
 			vkCmdPushConstants(cmd, vk_pipeline_layout,
 			                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 			                   0, sizeof(ShaderConstants), &consts);
 			
-			vkCmdDraw(cmd, 3, 1, 0, 0);
+			vkCmdDraw(cmd, 4, 1, 0, 0);
 		}
 
 		// NOTE: Stop recording rendering commands

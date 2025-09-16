@@ -1,20 +1,8 @@
 #version 450
 
-layout (location = 0) out vec3 f_color;
+layout (location = 0) out vec2 f_uv;
 
 void main() {
-	const vec3 positions[3] = vec3[3](
-		vec3(-1.0f, 1.0f, 0.0f),
-		vec3(0.0f, -1.0f, 0.0f),
-		vec3(1.0f, 1.0f, 0.0f)
-	);
-
-	const vec3 colors[3] = vec3[3](
-		vec3(1.0f, 0.0f, 0.0f),
-		vec3(0.0f, 1.0f, 0.0f),
-		vec3(0.0f, 0.0f, 1.0f)
-	);
-
-	gl_Position = vec4(positions[gl_VertexIndex], 1.0f);
-	f_color = colors[gl_VertexIndex];
+	f_uv = vec2(gl_VertexIndex & 1, gl_VertexIndex >> 1);
+	gl_Position = vec4(2.0f * f_uv - 1.0f, 0.0f, 1.0f);
 }
