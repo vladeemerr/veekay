@@ -1,0 +1,27 @@
+{
+	"version": 2,
+	"configurePresets": [
+		{
+			"name": "common",
+			"hidden": true,
+			"generator": "Ninja",
+			"cacheVariables": {}
+		},
+		{
+			"name": "debug",
+			"inherits": "common",
+			"binaryDir": "build-debug",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Debug"
+			}
+		},
+		{
+			"name": "release",
+			"inherits": "common",
+			"binaryDir": "build-release",
+			"cacheVariables": {
+				"CMAKE_BUILD_TYPE": "Release"
+			}
+		}
+	]
+}
