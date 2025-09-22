@@ -12,6 +12,10 @@
 
 #include <VkBootstrap.h>
 
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_vulkan.h>
+
 namespace {
 
 struct ShaderConstants {
@@ -36,6 +40,13 @@ VkSwapchainKHR vk_swapchain;
 VkFormat vk_swapchain_format;
 std::vector<VkImage> vk_swapchain_images;
 std::vector<VkImageView> vk_swapchain_image_views;
+
+// NOTE: ImGui rendering objects
+VkDescriptorPool imgui_descriptor_pool;
+VkRenderPass imgui_render_pass;
+VkCommandPool imgui_command_pool;
+std::vector<VkCommandBuffer> imgui_command_buffers;
+std::vector<VkFramebuffer> imgui_framebuffers;
 
 VkQueue vk_graphics_queue;
 uint32_t vk_graphics_queue_family;
@@ -179,6 +190,158 @@ int main() {
 		vk_swapchain_image_views = swapchain.get_image_views().value();
 	}
 
+	{ // NOTE: ImGui initialization
+		IMGUI_CHECKVERSION();
+		ImGui::CreateContext();
+		ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+		ImGui::StyleColorsDark();
+
+		ImGui_ImplGlfw_InitForVulkan(window, true);
+
+		{
+			VkDescriptorPoolSize size = {
+				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+				.descriptorCount = IMGUI_IMPL_VULKAN_MINIMUM_IMAGE_SAMPLER_POOL_SIZE,
+			};
+
+			VkDescriptorPoolCreateInfo info = {
+				.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+				.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT,
+				.maxSets = size.descriptorCount,
+				.poolSizeCount = 1,
+				.pPoolSizes = &size,
+			};
+
+			if (vkCreateDescriptorPool(vk_device, &info, 0, &imgui_descriptor_pool) != VK_SUCCESS) {
+				std::cerr << "Failed to create Vulkan descriptor pool for ImGui\n";
+				exit(1);
+			}
+		}
+
+		{
+			VkAttachmentDescription attachment{
+				.format = vk_swapchain_format,
+				.samples = VK_SAMPLE_COUNT_1_BIT,
+				.loadOp = VK_ATTACHMENT_LOAD_OP_LOAD,
+				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+				.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+				.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+			};
+
+			VkAttachmentReference ref{
+				.attachment = 0,
+				.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+			};
+
+			VkSubpassDescription subpass{
+				.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+				.colorAttachmentCount = 1,
+				.pColorAttachments = &ref,
+			};
+
+			VkSubpassDependency dependency{
+				.srcSubpass = VK_SUBPASS_EXTERNAL,
+				.dstSubpass = 0,
+				.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+				.srcAccessMask = 0,
+				.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT,
+			};
+
+			VkRenderPassCreateInfo info{
+				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+				.attachmentCount = 1,
+				.pAttachments = &attachment,
+				.subpassCount = 1,
+				.pSubpasses = &subpass,
+				.dependencyCount = 1,
+				.pDependencies = &dependency,
+			};
+
+			if (vkCreateRenderPass(vk_device, &info, nullptr, &imgui_render_pass) != VK_SUCCESS) {
+				std::cerr << "Failed to create ImGui Vulkan render pass\n";
+				exit(1);
+			}
+		}
+
+		{
+			VkFramebufferCreateInfo info{
+				.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+
+				.renderPass = imgui_render_pass,
+				.attachmentCount = 1,
+
+				.width = window_default_width,
+				.height = window_default_height,
+				.layers = 1,
+			};
+
+			const size_t count = vk_swapchain_images.size();
+
+			imgui_framebuffers.resize(count);
+
+			for (size_t i = 0; i < count; ++i) {
+				info.pAttachments = &vk_swapchain_image_views[i];
+				if (vkCreateFramebuffer(vk_device, &info, nullptr, &imgui_framebuffers[i]) != VK_SUCCESS) {
+					std::cerr << "Failed to create Vulkan framebuffer " << i << '\n';
+					exit(1);
+				}
+			}
+		}
+
+		{
+			size_t count = imgui_framebuffers.size();
+
+			imgui_command_buffers.resize(count);
+
+			{
+				VkCommandPoolCreateInfo info{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+					.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+					.queueFamilyIndex = vk_graphics_queue_family,
+				};
+
+				if (vkCreateCommandPool(vk_device, &info, nullptr, &imgui_command_pool) != VK_SUCCESS) {
+					std::cerr << "Failed to create ImGui Vulkan command pool\n";
+					exit(1);
+				}
+			}
+
+			{
+				VkCommandBufferAllocateInfo info{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+					.commandPool = imgui_command_pool,
+					.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+					.commandBufferCount = static_cast<uint32_t>(imgui_command_buffers.size()),
+				};
+
+				if (vkAllocateCommandBuffers(vk_device, &info, imgui_command_buffers.data()) != VK_SUCCESS) {
+					std::cerr << "Failed to allocate ImGui Vulkan command buffers\n";
+					exit(1);
+				}
+			}
+		}
+
+		ImGui_ImplVulkan_InitInfo info{
+			.Instance = vk_instance,
+			.PhysicalDevice = vk_physical_device,
+			.Device = vk_device,
+			.QueueFamily = vk_graphics_queue_family,
+			.Queue = vk_graphics_queue,
+			.DescriptorPool = imgui_descriptor_pool,
+			.MinImageCount = static_cast<uint32_t>(vk_swapchain_images.size()),
+			.ImageCount = static_cast<uint32_t>(vk_swapchain_images.size()),
+			.RenderPass = imgui_render_pass,
+		};
+
+		ImGui_ImplVulkan_Init(&info);
+	}
+
+	// The beginning of our rendering
+
 	{ // NOTE: Create render pass
 		VkAttachmentDescription attachment{
 			.format = vk_swapchain_format,
@@ -234,11 +397,11 @@ int main() {
 			.layers = 1,
 		};
 
-		const uint32_t n = vk_swapchain_images.size();
+		const size_t count = vk_swapchain_images.size();
 
-		vk_framebuffers.resize(n);
+		vk_framebuffers.resize(count);
 
-		for (uint32_t i = 0; i < n; ++i) {
+		for (size_t i = 0; i < count; ++i) {
 			info.pAttachments = &vk_swapchain_image_views[i];
 			if (vkCreateFramebuffer(vk_device, &info, nullptr, &vk_framebuffers[i]) != VK_SUCCESS) {
 				std::cerr << "Failed to create Vulkan framebuffer " << i << '\n';
@@ -259,7 +422,7 @@ int main() {
 
 		vk_present_semaphores.resize(vk_swapchain_images.size());
 
-		for (uint32_t i = 0, n = vk_swapchain_images.size(); i < n; ++i) {
+		for (size_t i = 0, e = vk_swapchain_images.size(); i != e; ++i) {
 			vkCreateSemaphore(vk_device, &sem_info, nullptr, &vk_present_semaphores[i]);
 		}
 
@@ -439,6 +602,14 @@ int main() {
 		glfwPollEvents();
 		float time = static_cast<float>(glfwGetTime());
 
+		ImGui_ImplVulkan_NewFrame();
+		ImGui_ImplGlfw_NewFrame();
+		ImGui::NewFrame();
+
+		ImGui::ShowDemoWindow();
+
+		ImGui::Render();
+
 		// NOTE: Wait until the previous frame finishes
 		vkWaitForFences(vk_device, 1, &vk_in_flight_fences[vk_current_frame], true, UINT64_MAX);
 		vkResetFences(vk_device, 1, &vk_in_flight_fences[vk_current_frame]);
@@ -449,65 +620,100 @@ int main() {
 		                      vk_render_semaphores[vk_current_frame],
 		                      nullptr, &swapchain_image_index);
 
-		// NOTE: Grab current frame command buffer
 		VkCommandBuffer cmd = vk_command_buffers[swapchain_image_index];
-		vkResetCommandBuffer(cmd, 0);
+		{ // NOTE: Our drawing
+			vkResetCommandBuffer(cmd, 0);
 
-		{ // NOTE: Start recording rendering commands
-			VkCommandBufferBeginInfo info{
-				.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-				.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-			};
+			{ // NOTE: Start recording rendering commands
+				VkCommandBufferBeginInfo info{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+					.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+				};
 
-			vkBeginCommandBuffer(cmd, &info);
+				vkBeginCommandBuffer(cmd, &info);
+			}
+
+			{ // NOTE: Use current swapchain framebuffer and clear it
+				VkClearValue clear_values{
+					.color = {{0.1f, 0.1f, 0.1f, 1.0f}},
+				};
+
+				VkRenderPassBeginInfo info{
+					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+					.renderPass = vk_render_pass,
+					.framebuffer = vk_framebuffers[swapchain_image_index],
+					.renderArea = {
+						.extent = {window_default_width, window_default_height},
+					},
+					.clearValueCount = 1,
+					.pClearValues = &clear_values,
+				};
+
+				vkCmdBeginRenderPass(cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
+			}
+
+			{ // NOTE: Draw!
+				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
+
+				ShaderConstants consts{
+					.time = time,
+				};
+				vkCmdPushConstants(cmd, vk_pipeline_layout,
+				                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+				                   0, sizeof(ShaderConstants), &consts);
+
+				vkCmdDraw(cmd, 3, 1, 0, 0);
+			}
+
+			// NOTE: Stop recording rendering commands
+			vkCmdEndRenderPass(cmd);
+			vkEndCommandBuffer(cmd);
 		}
 
-		{ // NOTE: Use current swapchain framebuffer and clear it
-			VkClearValue clear_values{
-				.color = {{0.1f, 0.1f, 0.1f, 1.0f}},
-			};
+		VkCommandBuffer imgui_cmd = imgui_command_buffers[swapchain_image_index];
+		{ // NOTE: Draw ImGui
+			vkResetCommandBuffer(imgui_cmd, 0);
 
-			VkRenderPassBeginInfo info{
-				.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-				.renderPass = vk_render_pass,
-				.framebuffer = vk_framebuffers[swapchain_image_index],
-				.renderArea = {
-					.extent = {window_default_width, window_default_height},
-				},
-				.clearValueCount = 1,
-				.pClearValues = &clear_values,
-			};
+			{
+				VkCommandBufferBeginInfo info{
+					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+					.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+				};
 
-			vkCmdBeginRenderPass(cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
+				vkBeginCommandBuffer(imgui_cmd, &info);
+			}
+
+			{
+				VkRenderPassBeginInfo info{
+					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+					.renderPass = imgui_render_pass,
+					.framebuffer = imgui_framebuffers[swapchain_image_index],
+					.renderArea = {
+						.extent = {window_default_width, window_default_height},
+					},
+				};
+
+				vkCmdBeginRenderPass(imgui_cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
+			}
+
+			ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), imgui_cmd);
+
+			vkCmdEndRenderPass(imgui_cmd);
+			vkEndCommandBuffer(imgui_cmd);
 		}
-
-		{ // NOTE: Draw!
-			vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
-
-			ShaderConstants consts{
-				.time = time,
-			};
-			vkCmdPushConstants(cmd, vk_pipeline_layout,
-			                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-			                   0, sizeof(ShaderConstants), &consts);
-			
-			vkCmdDraw(cmd, 3, 1, 0, 0);
-		}
-
-		// NOTE: Stop recording rendering commands
-		vkCmdEndRenderPass(cmd);
-		vkEndCommandBuffer(cmd);
 
 		{ // NOTE: Submit commands to graphics queue
 			VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+
+			VkCommandBuffer buffers[] = { cmd, imgui_cmd };
 
 			VkSubmitInfo info{
 				.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 				.waitSemaphoreCount = 1,
 				.pWaitSemaphores = &vk_render_semaphores[vk_current_frame],
 				.pWaitDstStageMask = &wait_stage,
-				.commandBufferCount = 1,
-				.pCommandBuffers = &cmd,
+				.commandBufferCount = 2,
+				.pCommandBuffers = buffers,
 				.signalSemaphoreCount = 1,
 				.pSignalSemaphores = &vk_present_semaphores[swapchain_image_index],
 			};
@@ -533,11 +739,11 @@ int main() {
 
 	vkDeviceWaitIdle(vk_device);
 
-	for (uint32_t i = 0, n = vk_swapchain_images.size(); i < n; ++i) {
+	for (size_t i = 0, e = vk_swapchain_images.size(); i != e; ++i) {
 		vkDestroySemaphore(vk_device, vk_present_semaphores[i], nullptr);
 	}
 
-	for (uint32_t i = 0; i < max_frames_in_flight; ++i) {
+	for (size_t i = 0; i < max_frames_in_flight; ++i) {
 		vkDestroySemaphore(vk_device, vk_render_semaphores[i], nullptr);
 		vkDestroyFence(vk_device, vk_in_flight_fences[i], nullptr);
 	}
@@ -552,7 +758,7 @@ int main() {
 	
 	vkDestroyRenderPass(vk_device, vk_render_pass, nullptr);
 
-	for (uint32_t i = 0, n = vk_framebuffers.size(); i < n; ++i) {
+	for (size_t i = 0, e = vk_framebuffers.size(); i != e; ++i) {
 		vkDestroyFramebuffer(vk_device, vk_framebuffers[i], nullptr);
 		vkDestroyImageView(vk_device, vk_swapchain_image_views[i], nullptr);
 	}

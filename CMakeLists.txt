@@ -28,6 +28,12 @@ FetchContent_Declare(
 	GIT_TAG v1.4.321
 )
 
+FetchContent_Declare(
+	imgui
+	GIT_REPOSITORY https://github.com/ocornut/imgui
+	GIT_TAG v1.92.3
+)
+
 find_package(Vulkan REQUIRED)
 
 set(GLFW_LIBRARY_TYPE STATIC)
@@ -35,7 +41,7 @@ set(GLFW_BUILD_EXAMPLES OFF)
 set(GLFW_BUILD_TESTS OFF)
 set(GLFW_BUILD_DOCS OFF)
 
-FetchContent_MakeAvailable(glfw vk-bootstrap)
+FetchContent_MakeAvailable(glfw vk-bootstrap imgui)
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
 	glfw
@@ -43,6 +49,19 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 	vk-bootstrap::vk-bootstrap
 )
 
+# Link ImGui
+target_include_directories(${PROJECT_NAME} PRIVATE ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_sources(${PROJECT_NAME} PRIVATE
+	${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
+	${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
+	${imgui_SOURCE_DIR}/imgui.cpp
+	${imgui_SOURCE_DIR}/imgui_draw.cpp
+	${imgui_SOURCE_DIR}/imgui_demo.cpp
+	${imgui_SOURCE_DIR}/imgui_tables.cpp
+	${imgui_SOURCE_DIR}/imgui_widgets.cpp
+)
+
+# Compile shaders
 find_program(GLSLC_FOUND glslc)
 if(GLSLC_FOUND)
 	set(_SHADER_BINARIES)
@@ -64,6 +83,7 @@ if(GLSLC_FOUND)
 
 	compile_shader(shader.vert)
 	compile_shader(shader.frag)
+
 	add_custom_target(shaders DEPENDS ${_SHADER_BINARIES})
 	add_dependencies(veekay shaders)
 endif()
