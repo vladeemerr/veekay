@@ -22,6 +22,16 @@
 			"cacheVariables": {
 				"CMAKE_BUILD_TYPE": "Release"
 			}
+		},
+		{
+			"name": "msvc-debug",
+			"inherits": "debug",
+			"generator": "Visual Studio 17 2022"
+		},
+		{
+			"name": "msvc-release",
+			"inherits": "release",
+			"generator": "Visual Studio 17 2022"
 		}
 	]
 }

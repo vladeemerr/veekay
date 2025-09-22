@@ -10,8 +10,6 @@ if(LINUX)
 elseif(MSVC)
 	target_compile_options(${PROJECT_NAME} PRIVATE /W4)
 	target_link_options(${PROJECT_NAME} PRIVATE /subsystem:windows /entry:mainCRTStartup)
-
-	set(VK_BOOTSTRAP_VULKAN_HEADER_DIR $ENV{VULKAN_SDK}/Include)
 else()
 	message(FATAL_ERROR "${CMAKE_SYSTEM_NAME} is not supported")
 endif()
