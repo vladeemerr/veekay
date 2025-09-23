@@ -4,6 +4,7 @@
 #include <iostream>
 #include <fstream>
 #include <optional>
+#include <cmath>
 
 #include <veekay/veekay.hpp>
 
@@ -13,13 +14,24 @@
 namespace {
 
 struct ShaderConstants {
-	float param;
+	float projection[4][4];
+	float model[4][4];
+};
+
+struct Vertex {
+	float x, y, z;
+	float r, g, b;
 };
 
 VkShaderModule vk_vertex_shader_module;
 VkShaderModule vk_fragment_shader_module;
 VkPipelineLayout vk_pipeline_layout;
 VkPipeline vk_pipeline;
+
+VkBuffer vk_vertex_buffer;
+VkDeviceMemory vk_vertex_buffer_memory;
+
+float camera_fov = 60.0f;
 
 std::optional<VkShaderModule> loadShaderModule(const char* path) {
 	std::ifstream file(path, std::ios::binary | std::ios::ate);
@@ -45,6 +57,9 @@ std::optional<VkShaderModule> loadShaderModule(const char* path) {
 }
 
 void initialize() {
+	VkDevice& device = veekay::app.vk_device;
+	VkPhysicalDevice& physical_device = veekay::app.vk_physical_device;
+	
 	{ // NOTE: Build graphics pipeline
 		auto vertex_shader = loadShaderModule("./shaders/shader.vert.spv");
 		if (!vertex_shader) {
@@ -79,8 +94,33 @@ void initialize() {
 			.pName = "main",
 		};
 
+		VkVertexInputBindingDescription buffer_binding{
+			.binding = 0,
+			.stride = sizeof(Vertex),
+			.inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
+		};
+
+		VkVertexInputAttributeDescription attributes[] = {
+			{
+				.location = 0,
+				.binding = 0,
+				.format = VK_FORMAT_R32G32B32_SFLOAT,
+				.offset = offsetof(Vertex, x),
+			},
+			{
+				.location = 1,
+				.binding = 0,
+				.format = VK_FORMAT_R32G32B32_SFLOAT,
+				.offset = offsetof(Vertex, r),
+			}
+		};
+
 		VkPipelineVertexInputStateCreateInfo input_state_info{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+			.vertexBindingDescriptionCount = 1,
+			.pVertexBindingDescriptions = &buffer_binding,
+			.vertexAttributeDescriptionCount = sizeof(attributes) / sizeof(attributes[0]),
+			.pVertexAttributeDescriptions = attributes,
 		};
 
 		VkPipelineInputAssemblyStateCreateInfo assembly_state_info{
@@ -162,7 +202,7 @@ void initialize() {
 			.pPushConstantRanges = &push_constants,
 		};
 
-		if (vkCreatePipelineLayout(veekay::app.vk_device, &layout_info,
+		if (vkCreatePipelineLayout(device, &layout_info,
 		                           nullptr, &vk_pipeline_layout) != VK_SUCCESS) {
 			std::cerr << "Failed to create Vulkan pipeline layout\n";
 			veekay::app.running = false;
@@ -184,27 +224,105 @@ void initialize() {
 			.renderPass = veekay::app.vk_render_pass,
 		};
 
-		if (vkCreateGraphicsPipelines(veekay::app.vk_device, nullptr,
+		if (vkCreateGraphicsPipelines(device, nullptr,
 		                              1, &info, nullptr, &vk_pipeline) != VK_SUCCESS) {
 			std::cerr << "Failed to create Vulkan pipeline\n";
 			veekay::app.running = false;
 			return;
 		}
 	}
+
+	Vertex vertices[] = {
+		{ -1.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f },
+		{ 0.0f, -1.0f, 0.0f, 0.0f, 1.0f, 0.0f },
+		{ 1.0f, 1.0f,  0.0f, 0.0f, 0.0f, 1.0f },
+	};
+
+	{
+		VkBufferCreateInfo info{
+			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+			.size = sizeof(vertices),
+			.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
+		};
+
+		if (vkCreateBuffer(device, &info, nullptr,
+		                   &vk_vertex_buffer) != VK_SUCCESS) {
+			std::cerr << "Failed to create Vulkan vertex buffer\n";
+			veekay::app.running = false;
+			return;
+		}
+	}
+
+	{
+		VkMemoryRequirements requirements;
+		vkGetBufferMemoryRequirements(device, vk_vertex_buffer,
+		                              &requirements);
+
+		VkPhysicalDeviceMemoryProperties properties;
+		vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
+
+		const VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+		                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+
+		uint32_t index = UINT_MAX;
+		for (uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
+			const VkMemoryType& type = properties.memoryTypes[i];
+
+			if ((requirements.memoryTypeBits & (1 << i)) &&
+			    (type.propertyFlags & flags) == flags) {
+				index = i;
+				break;
+			}
+		}
+
+		if (index == UINT_MAX) {
+			std::cerr << "Failed to find required memory type to allocate Vulkan vertex buffer\n";
+			veekay::app.running = false;
+			return;
+		}
+
+		VkMemoryAllocateInfo info{
+			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.allocationSize = requirements.size,
+			.memoryTypeIndex = index,
+		};
+
+		if (vkAllocateMemory(device, &info, nullptr, &vk_vertex_buffer_memory) != VK_SUCCESS) {
+			std::cerr << "Failed to allocate Vulkan vertex buffer memory\n";
+			veekay::app.running = false;
+			return;
+		}
+
+		if (vkBindBufferMemory(device, vk_vertex_buffer,
+		                       vk_vertex_buffer_memory, 0) != VK_SUCCESS) {
+			std::cerr << "Failed to bind Vulkan vertex buffer memory\n";
+			veekay::app.running = false;
+			return;
+		}
+
+		void* data;
+		vkMapMemory(device, vk_vertex_buffer_memory, 0, requirements.size, 0, &data);
+		memcpy(data, vertices, sizeof(vertices));
+		vkUnmapMemory(device, vk_vertex_buffer_memory);
+	}
 }
 
 void shutdown() {
-	vkDestroyPipeline(veekay::app.vk_device, vk_pipeline, nullptr);
-	vkDestroyPipelineLayout(veekay::app.vk_device, vk_pipeline_layout, nullptr);
-	vkDestroyShaderModule(veekay::app.vk_device, vk_fragment_shader_module, nullptr);
-	vkDestroyShaderModule(veekay::app.vk_device, vk_vertex_shader_module, nullptr);
-}
+	VkDevice& device = veekay::app.vk_device;
 
-float param = 0.0f;
+	vkFreeMemory(device, vk_vertex_buffer_memory, nullptr);
+	vkDestroyBuffer(device, vk_vertex_buffer, nullptr);
+	
+	vkDestroyPipeline(device, vk_pipeline, nullptr);
+	vkDestroyPipelineLayout(device, vk_pipeline_layout, nullptr);
+	vkDestroyShaderModule(device, vk_fragment_shader_module, nullptr);
+	vkDestroyShaderModule(device, vk_vertex_shader_module, nullptr);
+}
 
 void update(double time) {
 	ImGui::Begin("Controls:");
-	ImGui::SliderFloat("Parameter", &param, 0.0f, 1.0f);
+	ImGui::SliderFloat("FoV (degrees)", &camera_fov, 50.0f, 180.0f);
 	ImGui::End();
 }
 
@@ -246,12 +364,45 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 	{ // NOTE: Draw!
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
 
-		ShaderConstants constants{
-			.param = param,
-		};
+		VkDeviceSize offset = 0;
+		vkCmdBindVertexBuffers(cmd, 0, 1, &vk_vertex_buffer, &offset);
+
+		ShaderConstants constants{};
+		{
+			auto& projection = constants.projection;
+
+			const float radians = camera_fov * M_PI / 180.0f;
+			const float cot = 1.0f / tanf(radians / 2.0f);
+			const float aspect_ratio = static_cast<float>(veekay::app.window_width) / 
+			                           static_cast<float>(veekay::app.window_height);
+			const float near = 0.01f;
+			const float far = 1000.0f;
+
+			projection[0][0] = cot / aspect_ratio;
+			projection[1][1] = cot;
+			projection[2][3] = 1.0f;
+
+			projection[2][2] = far / (far - near);
+			projection[3][2] = (-near * far) / (far - near);
+		}
+
+		{
+			auto& model = constants.model;
+
+			model[0][0] = 1.0f;
+			model[1][1] = 1.0f;
+			model[2][2] = 1.0f;
+			model[3][3] = 1.0f;
+
+			model[3][0] = 0.0f;
+			model[3][1] = 0.0f;
+			model[3][2] = 3.0f;
+		}
+	
 		vkCmdPushConstants(cmd, vk_pipeline_layout,
 		                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 		                   0, sizeof(ShaderConstants), &constants);
+
 		vkCmdDraw(cmd, 3, 1, 0, 0);
 	}
 
