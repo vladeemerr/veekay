@@ -3,7 +3,12 @@ include(FetchContent)
 
 project(veekay LANGUAGES C CXX)
 
-add_executable(${PROJECT_NAME} source/veekay.cpp)
+add_library(${PROJECT_NAME} source/veekay.cpp)
+
+target_include_directories(${PROJECT_NAME} PUBLIC
+    $<BUILD_INTERFACE:${veekay_SOURCE_DIR}/include>
+    $<INSTALL_INTERFACE:include>
+)
 
 if(LINUX)
 	target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
@@ -15,6 +20,8 @@ else()
 endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD_REQUIRED TRUE CXX_STANDARD 20)
+
+add_subdirectory(testbed)
 
 FetchContent_Declare(
 	glfw

@@ -16,10 +16,12 @@
 #include <imgui_impl_glfw.h>
 #include <imgui_impl_vulkan.h>
 
+#include <veekay/veekay.hpp>
+
 namespace {
 
 struct ShaderConstants {
-	float time;
+	float param;
 };
 
 constexpr uint32_t window_default_width = 1280;
@@ -91,7 +93,7 @@ std::optional<VkShaderModule> loadShaderModule(const char* path) {
 
 } // namespace
 
-int main() {
+int veekay::run(const veekay::AppInfo& app_info) {
 	if (!glfwInit()) {
 		std::cerr << "Failed to initialize GLFW\n";
 		return 1;
@@ -215,7 +217,7 @@ int main() {
 
 			if (vkCreateDescriptorPool(vk_device, &info, 0, &imgui_descriptor_pool) != VK_SUCCESS) {
 				std::cerr << "Failed to create Vulkan descriptor pool for ImGui\n";
-				exit(1);
+				return 1;
 			}
 		}
 
@@ -263,7 +265,7 @@ int main() {
 
 			if (vkCreateRenderPass(vk_device, &info, nullptr, &imgui_render_pass) != VK_SUCCESS) {
 				std::cerr << "Failed to create ImGui Vulkan render pass\n";
-				exit(1);
+				return 1;
 			}
 		}
 
@@ -287,7 +289,7 @@ int main() {
 				info.pAttachments = &vk_swapchain_image_views[i];
 				if (vkCreateFramebuffer(vk_device, &info, nullptr, &imgui_framebuffers[i]) != VK_SUCCESS) {
 					std::cerr << "Failed to create Vulkan framebuffer " << i << '\n';
-					exit(1);
+					return 1;
 				}
 			}
 		}
@@ -306,7 +308,7 @@ int main() {
 
 				if (vkCreateCommandPool(vk_device, &info, nullptr, &imgui_command_pool) != VK_SUCCESS) {
 					std::cerr << "Failed to create ImGui Vulkan command pool\n";
-					exit(1);
+					return 1;
 				}
 			}
 
@@ -320,7 +322,7 @@ int main() {
 
 				if (vkAllocateCommandBuffers(vk_device, &info, imgui_command_buffers.data()) != VK_SUCCESS) {
 					std::cerr << "Failed to allocate ImGui Vulkan command buffers\n";
-					exit(1);
+					return 1;
 				}
 			}
 		}
@@ -600,13 +602,16 @@ int main() {
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
-		float time = static_cast<float>(glfwGetTime());
 
 		ImGui_ImplVulkan_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		ImGui::ShowDemoWindow();
+		static float param = 0.0f;
+
+		ImGui::Begin("Controls");
+		ImGui::SliderFloat("Parameter", &param, 0.0f, 1.0f);
+		ImGui::End();
 
 		ImGui::Render();
 
@@ -656,7 +661,7 @@ int main() {
 				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
 
 				ShaderConstants consts{
-					.time = time,
+					.param = param,
 				};
 				vkCmdPushConstants(cmd, vk_pipeline_layout,
 				                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
