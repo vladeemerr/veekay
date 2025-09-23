@@ -5,11 +5,19 @@
 namespace veekay {
 
 typedef void (*InitFunc)();
-typedef void (*UpdateFunc)(double time);
-typedef void (*RenderFunc)();
 typedef void (*ShutdownFunc)();
+typedef void (*UpdateFunc)(double time);
+typedef void (*RenderFunc)(VkCommandBuffer, VkFramebuffer);
 
 struct Application {
+	uint32_t window_width;
+	uint32_t window_height;
+
+	VkDevice vk_device;
+	VkPhysicalDevice vk_physical_device;
+	VkRenderPass vk_render_pass;
+
+	bool running;
 };
 
 struct ApplicationInfo {

@@ -1,7 +1,6 @@
 #include <cstdint>
+#include <climits>
 #include <iostream>
-#include <fstream>
-#include <optional>
 
 #include <vector>
 
@@ -49,6 +48,7 @@ VkCommandPool imgui_command_pool;
 std::vector<VkCommandBuffer> imgui_command_buffers;
 std::vector<VkFramebuffer> imgui_framebuffers;
 
+VkFormat vk_image_depth_format;
 VkImage vk_image_depth;
 VkDeviceMemory vk_image_depth_memory;
 VkImageView vk_image_depth_view;
@@ -64,36 +64,14 @@ uint32_t vk_current_frame;
 VkCommandPool vk_command_pool;
 std::vector<VkCommandBuffer> vk_command_buffers;
 
-VkShaderModule vk_vertex_shader_module;
-VkShaderModule vk_fragment_shader_module;
-VkPipelineLayout vk_pipeline_layout;
-VkPipeline vk_pipeline;
-
-std::optional<VkShaderModule> loadShaderModule(const char* path) {
-	std::ifstream file(path, std::ios::binary | std::ios::ate);
-	size_t size = file.tellg();
-	std::vector<uint32_t> buffer(size / sizeof(uint32_t));
-	file.seekg(0);
-	file.read(reinterpret_cast<char*>(buffer.data()), size);
-	file.close();
-
-	VkShaderModuleCreateInfo info{
-		.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-		.codeSize = size,
-		.pCode = buffer.data(),
-	};
-
-	VkShaderModule result;
-	if (vkCreateShaderModule(vk_device, &info, nullptr, &result) != VK_SUCCESS) {
-		return std::nullopt;
-	}
-
-	return std::make_optional<VkShaderModule>(result);
-}
-
 } // namespace
 
+// NOTE: Global application state definition
+veekay::Application veekay::app;
+
 int veekay::run(const veekay::ApplicationInfo& app_info) {
+	veekay::app.running = true;
+	
 	if (!glfwInit()) {
 		std::cerr << "Failed to initialize GLFW\n";
 		return 1;
@@ -108,6 +86,9 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		std::cerr << "Failed to create GLFW window\n";
 		return 1;
 	}
+
+	veekay::app.window_width = window_default_width;
+	veekay::app.window_height = window_default_height;
 
 	{ // NOTE: Initialize Vulkan: grab device and create swapchain
 		vkb::InstanceBuilder instance_builder;
@@ -190,6 +171,9 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		vk_swapchain = swapchain.swapchain;
 		vk_swapchain_images = swapchain.get_images().value();
 		vk_swapchain_image_views = swapchain.get_image_views().value();
+
+		veekay::app.vk_device = vk_device;
+		veekay::app.vk_physical_device = vk_physical_device;
 	}
 
 	{ // NOTE: ImGui initialization
@@ -230,7 +214,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
 				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
 				.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-				.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+				.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
 			};
 
 			VkAttachmentReference ref{
@@ -272,10 +256,8 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		{
 			VkFramebufferCreateInfo info{
 				.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-
 				.renderPass = imgui_render_pass,
 				.attachmentCount = 1,
-
 				.width = window_default_width,
 				.height = window_default_height,
 				.layers = 1,
@@ -342,13 +324,31 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		ImGui_ImplVulkan_Init(&info);
 	}
 
-	// The beginning of our rendering
+	{
+		VkFormat candidates[] = {
+			VK_FORMAT_D32_SFLOAT,
+			VK_FORMAT_D32_SFLOAT_S8_UINT,
+			VK_FORMAT_D24_UNORM_S8_UINT,
+		};
+
+		vk_image_depth_format = VK_FORMAT_UNDEFINED;
+
+		for (const auto& f : candidates) {
+			VkFormatProperties properties;
+			vkGetPhysicalDeviceFormatProperties(vk_physical_device, f, &properties);
+
+			if (properties.optimalTilingFeatures & VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT) {
+				vk_image_depth_format = f;
+				break;
+			}
+		}
+	}
 
 	{ // NOTE: Create depth buffer
 		VkImageCreateInfo info{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 			.imageType = VK_IMAGE_TYPE_2D,
-			.format = VK_FORMAT_D24_UNORM_S8_UINT,
+			.format = vk_image_depth_format,
 			.extent = {window_default_width, window_default_height, 1},
 			.mipLevels = 1,
 			.arrayLayers = 1,
@@ -408,7 +408,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
 			.image = vk_image_depth,
 			.viewType = VK_IMAGE_VIEW_TYPE_2D,
-			.format = VK_FORMAT_D24_UNORM_S8_UINT,
+			.format = vk_image_depth_format,
 			.subresourceRange = {
 				.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
 				.baseMipLevel = 0,
@@ -441,7 +441,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		};
 
 		VkAttachmentDescription depth_attachment{
-			.format = VK_FORMAT_D24_UNORM_S8_UINT,
+			.format = vk_image_depth_format,
 			.samples = VK_SAMPLE_COUNT_1_BIT,
 			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
 			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
@@ -478,6 +478,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 			.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
 			                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+			.dependencyFlags = VK_DEPENDENCY_BY_REGION_BIT,
 		};
 
 		VkRenderPassCreateInfo info{
@@ -497,6 +498,8 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			std::cerr << "Failed to create render pass\n";
 			return 1;
 		}
+
+		veekay::app.vk_render_pass = vk_render_pass;
 	}
 
 	{ // NOTE: Create framebuffer objects from swapchain images
@@ -582,141 +585,9 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		}
 	}
 
-	{ // NOTE: Build graphics pipeline
-		auto vertex_shader = loadShaderModule("./shaders/shader.vert.spv");
-		if (!vertex_shader) {
-			std::cerr << "Failed to load Vulkan vertex shader from file\n";
-			return 1;
-		}
+	app_info.init();
 
-		auto fragment_shader = loadShaderModule("./shaders/shader.frag.spv");
-		if (!fragment_shader) {
-			std::cerr << "Failed to load Vulkan fragment shader from file\n";
-			return 1;
-		}
-
-		vk_vertex_shader_module = vertex_shader.value();
-		vk_fragment_shader_module = fragment_shader.value();
-
-		VkPipelineShaderStageCreateInfo stage_infos[2];
-
-		stage_infos[0] = VkPipelineShaderStageCreateInfo{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.stage = VK_SHADER_STAGE_VERTEX_BIT,
-			.module = vk_vertex_shader_module,
-			.pName = "main",
-		};
-
-		stage_infos[1] = VkPipelineShaderStageCreateInfo{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-			.stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-			.module = vk_fragment_shader_module,
-			.pName = "main",
-		};
-
-		VkPipelineVertexInputStateCreateInfo input_state_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-		};
-
-		VkPipelineInputAssemblyStateCreateInfo assembly_state_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-			.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
-		};
-
-		VkPipelineRasterizationStateCreateInfo raster_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-			.polygonMode = VK_POLYGON_MODE_FILL,
-			.cullMode = VK_CULL_MODE_NONE,
-			.frontFace = VK_FRONT_FACE_CLOCKWISE,
-			.lineWidth = 1.0f,
-		};
-
-		VkPipelineMultisampleStateCreateInfo sample_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-			.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
-			.sampleShadingEnable = false,
-			.minSampleShading = 1.0f,
-		};
-
-		VkPipelineColorBlendAttachmentState attachment_info{
-			.colorWriteMask = VK_COLOR_COMPONENT_R_BIT |
-			                  VK_COLOR_COMPONENT_G_BIT |
-			                  VK_COLOR_COMPONENT_B_BIT |
-			                  VK_COLOR_COMPONENT_A_BIT,
-		};
-
-		VkViewport viewport{
-			.x = 0.0f,
-			.y = 0.0f,
-			.width = static_cast<float>(window_default_width),
-			.height = static_cast<float>(window_default_height),
-			.minDepth = 0.0f,
-			.maxDepth = 1.0f,
-		};
-
-		VkRect2D scissor{
-			.offset = {0, 0},
-			.extent = {window_default_width, window_default_height},
-		};
-
-		VkPipelineViewportStateCreateInfo viewport_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
-
-			.viewportCount = 1,
-			.pViewports = &viewport,
-
-			.scissorCount = 1,
-			.pScissors = &scissor,
-		};
-
-		VkPipelineDepthStencilStateCreateInfo depth_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-			.depthTestEnable = true,
-			.depthWriteEnable = true,
-			.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
-		};
-
-		VkPipelineColorBlendStateCreateInfo blend_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-
-			.logicOpEnable = false,
-			.logicOp = VK_LOGIC_OP_COPY,
-
-			.attachmentCount = 1,
-			.pAttachments = &attachment_info
-		};
-
-		VkPipelineLayoutCreateInfo layout_info{
-			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-		};
-
-		if (vkCreatePipelineLayout(vk_device, &layout_info, nullptr, &vk_pipeline_layout) != VK_SUCCESS) {
-			std::cerr << "Failed to create Vulkan pipeline layout\n";
-			return 1;
-		}
-		
-		VkGraphicsPipelineCreateInfo info{
-			.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-			.stageCount = 2,
-			.pStages = stage_infos,
-			.pVertexInputState = &input_state_info,
-			.pInputAssemblyState = &assembly_state_info,
-			.pViewportState = &viewport_info,
-			.pRasterizationState = &raster_info,
-			.pMultisampleState = &sample_info,
-			.pDepthStencilState = &depth_info,
-			.pColorBlendState = &blend_info,
-			.layout = vk_pipeline_layout,
-			.renderPass = vk_render_pass,
-		};
-
-		if (vkCreateGraphicsPipelines(vk_device, nullptr, 1, &info, nullptr, &vk_pipeline) != VK_SUCCESS) {
-			std::cerr << "Failed to create Vulkan pipeline\n";
-			return 1;
-		}
-	}
-
-	while (!glfwWindowShouldClose(window)) {
+	while (veekay::app.running && !glfwWindowShouldClose(window)) {
 		glfwPollEvents();
 		double time = glfwGetTime();
 
@@ -739,51 +610,11 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		                      nullptr, &swapchain_image_index);
 
 		VkCommandBuffer cmd = vk_command_buffers[swapchain_image_index];
-		app_info.render();
 
-		{ // NOTE: Our drawing
-			vkResetCommandBuffer(cmd, 0);
-
-			{ // NOTE: Start recording rendering commands
-				VkCommandBufferBeginInfo info{
-					.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-					.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-				};
-
-				vkBeginCommandBuffer(cmd, &info);
-			}
-
-			{ // NOTE: Use current swapchain framebuffer and clear it
-				VkClearValue clear_color{.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
-				VkClearValue clear_depth{.depthStencil = {1.0f, 0}};
-
-				VkClearValue clear_values[] = {clear_color, clear_depth};
-
-				VkRenderPassBeginInfo info{
-					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-					.renderPass = vk_render_pass,
-					.framebuffer = vk_framebuffers[swapchain_image_index],
-					.renderArea = {
-						.extent = {window_default_width, window_default_height},
-					},
-					.clearValueCount = 2,
-					.pClearValues = clear_values,
-				};
-
-				vkCmdBeginRenderPass(cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
-			}
-
-			{ // NOTE: Draw!
-				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
-				vkCmdDraw(cmd, 3, 1, 0, 0);
-			}
-
-			// NOTE: Stop recording rendering commands
-			vkCmdEndRenderPass(cmd);
-			vkEndCommandBuffer(cmd);
-		}
+		app_info.render(cmd, vk_framebuffers[swapchain_image_index]);
 
 		VkCommandBuffer imgui_cmd = imgui_command_buffers[swapchain_image_index];
+#if 0
 		{ // NOTE: Draw ImGui
 			vkResetCommandBuffer(imgui_cmd, 0);
 
@@ -814,6 +645,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			vkCmdEndRenderPass(imgui_cmd);
 			vkEndCommandBuffer(imgui_cmd);
 		}
+#endif
 
 		{ // NOTE: Submit commands to graphics queue
 			VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -825,7 +657,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 				.waitSemaphoreCount = 1,
 				.pWaitSemaphores = &vk_render_semaphores[vk_current_frame],
 				.pWaitDstStageMask = &wait_stage,
-				.commandBufferCount = 2,
+				.commandBufferCount = 1,
 				.pCommandBuffers = buffers,
 				.signalSemaphoreCount = 1,
 				.pSignalSemaphores = &vk_present_semaphores[swapchain_image_index],
@@ -856,12 +688,6 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 
 	vkDestroyCommandPool(vk_device, vk_command_pool, nullptr);
 
-	vkDestroyPipeline(vk_device, vk_pipeline, nullptr);
-	vkDestroyPipelineLayout(vk_device, vk_pipeline_layout, nullptr);
-
-	vkDestroyShaderModule(vk_device, vk_fragment_shader_module, nullptr);
-	vkDestroyShaderModule(vk_device, vk_vertex_shader_module, nullptr);
-
 	for (size_t i = 0, e = vk_swapchain_images.size(); i != e; ++i) {
 		vkDestroySemaphore(vk_device, vk_present_semaphores[i], nullptr);
 	}
@@ -885,6 +711,10 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		vkDestroyFramebuffer(vk_device, imgui_framebuffers[i], nullptr);
 		vkDestroyImageView(vk_device, vk_swapchain_image_views[i], nullptr);
 	}
+
+	ImGui_ImplVulkan_Shutdown();
+	ImGui_ImplGlfw_Shutdown();
+	ImGui::DestroyContext();
 
 	vkDestroyDescriptorPool(vk_device, imgui_descriptor_pool, nullptr);
 	
