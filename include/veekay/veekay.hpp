@@ -1,19 +1,26 @@
 #pragma once
 
+#include <vulkan/vulkan_core.h>
+
 namespace veekay {
 
-typedef void (*InitFunc)(void);
-typedef void (*UpdateFunc)(void);
-typedef void (*RenderFunc)(void);
-typedef void (*ShutdownFunc)(void);
+typedef void (*InitFunc)();
+typedef void (*UpdateFunc)(double time);
+typedef void (*RenderFunc)();
+typedef void (*ShutdownFunc)();
 
-struct AppInfo {
-	InitFunc init;
-	UpdateFunc update;
-	RenderFunc render;
-	ShutdownFunc shutdown;
+struct Application {
 };
 
-int run(const AppInfo& app_info);
+struct ApplicationInfo {
+	InitFunc init;
+	ShutdownFunc shutdown;
+	UpdateFunc update;
+	RenderFunc render;
+};
+
+extern Application app;
+
+int run(const ApplicationInfo& app_info);
 
 } // namespace veekay

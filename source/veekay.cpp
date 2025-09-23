@@ -20,10 +20,6 @@
 
 namespace {
 
-struct ShaderConstants {
-	float param;
-};
-
 constexpr uint32_t window_default_width = 1280;
 constexpr uint32_t window_default_height = 720;
 constexpr char window_title[] = "Veekay";
@@ -43,6 +39,9 @@ VkFormat vk_swapchain_format;
 std::vector<VkImage> vk_swapchain_images;
 std::vector<VkImageView> vk_swapchain_image_views;
 
+VkQueue vk_graphics_queue;
+uint32_t vk_graphics_queue_family;
+
 // NOTE: ImGui rendering objects
 VkDescriptorPool imgui_descriptor_pool;
 VkRenderPass imgui_render_pass;
@@ -50,11 +49,9 @@ VkCommandPool imgui_command_pool;
 std::vector<VkCommandBuffer> imgui_command_buffers;
 std::vector<VkFramebuffer> imgui_framebuffers;
 
-VkQueue vk_graphics_queue;
-uint32_t vk_graphics_queue_family;
-
-VkCommandPool vk_command_pool;
-std::vector<VkCommandBuffer> vk_command_buffers;
+VkImage vk_image_depth;
+VkDeviceMemory vk_image_depth_memory;
+VkImageView vk_image_depth_view;
 
 VkRenderPass vk_render_pass;
 std::vector<VkFramebuffer> vk_framebuffers;
@@ -63,6 +60,9 @@ std::vector<VkSemaphore> vk_render_semaphores;
 std::vector<VkSemaphore> vk_present_semaphores;
 std::vector<VkFence> vk_in_flight_fences;
 uint32_t vk_current_frame;
+
+VkCommandPool vk_command_pool;
+std::vector<VkCommandBuffer> vk_command_buffers;
 
 VkShaderModule vk_vertex_shader_module;
 VkShaderModule vk_fragment_shader_module;
@@ -93,7 +93,7 @@ std::optional<VkShaderModule> loadShaderModule(const char* path) {
 
 } // namespace
 
-int veekay::run(const veekay::AppInfo& app_info) {
+int veekay::run(const veekay::ApplicationInfo& app_info) {
 	if (!glfwInit()) {
 		std::cerr << "Failed to initialize GLFW\n";
 		return 1;
@@ -344,8 +344,88 @@ int veekay::run(const veekay::AppInfo& app_info) {
 
 	// The beginning of our rendering
 
+	{ // NOTE: Create depth buffer
+		VkImageCreateInfo info{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+			.imageType = VK_IMAGE_TYPE_2D,
+			.format = VK_FORMAT_D24_UNORM_S8_UINT,
+			.extent = {window_default_width, window_default_height, 1},
+			.mipLevels = 1,
+			.arrayLayers = 1,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.tiling = VK_IMAGE_TILING_OPTIMAL,
+			.usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+		};
+
+		if (vkCreateImage(vk_device, &info, nullptr, &vk_image_depth) != VK_SUCCESS) {
+			std::cerr << "Failed to create Vulkan depth image\n";
+			return 1;
+		}
+	}
+
+	{ // NOTE: Allocate depth buffer memory
+		VkMemoryRequirements requirements;
+		vkGetImageMemoryRequirements(vk_device, vk_image_depth, &requirements);
+
+		VkPhysicalDeviceMemoryProperties properties;
+		vkGetPhysicalDeviceMemoryProperties(vk_physical_device, &properties);
+
+		uint32_t index = UINT_MAX;
+		for (uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
+			const VkMemoryType& type = properties.memoryTypes[i];
+
+			if ((requirements.memoryTypeBits & (1 << i)) &&
+			    (type.propertyFlags & VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT)) {
+				index = i;
+				break;
+			}
+		}
+
+		if (index == UINT_MAX) {
+			std::cerr << "Failed to find required memory type for Vulkan depth image\n";
+			return 1;
+		}
+
+		VkMemoryAllocateInfo info = {
+			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+			.allocationSize = requirements.size,
+			.memoryTypeIndex = index,
+		};
+
+		if (vkAllocateMemory(vk_device, &info, nullptr, &vk_image_depth_memory) != VK_SUCCESS) {
+			std::cerr << "Failed to allocate memory for Vulkan depth image\n";
+			return 1;
+		}
+
+		if (vkBindImageMemory(vk_device, vk_image_depth, vk_image_depth_memory, 0) != VK_SUCCESS) {
+			std::cerr << "Failed to bind Vulkan depth image with device memory\n";
+			return 1;
+		}
+	}
+
+	{ // NOTE: Create depth buffer view object
+		VkImageViewCreateInfo info = {
+			.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+			.image = vk_image_depth,
+			.viewType = VK_IMAGE_VIEW_TYPE_2D,
+			.format = VK_FORMAT_D24_UNORM_S8_UINT,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+				.baseMipLevel = 0,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			},
+		};
+
+		if (vkCreateImageView(vk_device, &info, nullptr, &vk_image_depth_view) != VK_SUCCESS) {
+			std::cerr << "Failed to create Vulkan depth image view\n";
+			return 1;
+		}
+	}
+
 	{ // NOTE: Create render pass
-		VkAttachmentDescription attachment{
+		VkAttachmentDescription color_attachment{
 			.format = vk_swapchain_format,
 
 			.samples = VK_SAMPLE_COUNT_1_BIT,
@@ -360,25 +440,57 @@ int veekay::run(const veekay::AppInfo& app_info) {
 			.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 		};
 
-		VkAttachmentReference ref{
+		VkAttachmentDescription depth_attachment{
+			.format = VK_FORMAT_D24_UNORM_S8_UINT,
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+		};
+
+		VkAttachmentReference color_ref{
 			.attachment = 0,
 			.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+		};
+
+		VkAttachmentReference depth_ref{
+			.attachment = 1,
+			.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
 		};
 
 		VkSubpassDescription subpass{
 			.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
 			.colorAttachmentCount = 1,
-			.pColorAttachments = &ref,
+			.pColorAttachments = &color_ref,
+			.pDepthStencilAttachment = &depth_ref,
+		};
+
+		VkAttachmentDescription attachments[] = {color_attachment, depth_attachment};
+
+		VkSubpassDependency dependency{
+			.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+			                VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT |
+			                VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT,
+			.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+			.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+			                 VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
 		};
 
 		VkRenderPassCreateInfo info{
 			.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
 
-			.attachmentCount = 1,
-			.pAttachments = &attachment,
+			.attachmentCount = 2,
+			.pAttachments = attachments,
 
 			.subpassCount = 1,
 			.pSubpasses = &subpass,
+
+			.dependencyCount = 1,
+			.pDependencies = &dependency,
 		};
 
 		if (vkCreateRenderPass(vk_device, &info, nullptr, &vk_render_pass) != VK_SUCCESS) {
@@ -388,11 +500,15 @@ int veekay::run(const veekay::AppInfo& app_info) {
 	}
 
 	{ // NOTE: Create framebuffer objects from swapchain images
+		VkImageView attachments[] = {VK_NULL_HANDLE, vk_image_depth_view};
+
 		VkFramebufferCreateInfo info{
 			.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 
 			.renderPass = vk_render_pass,
-			.attachmentCount = 1,
+
+			.attachmentCount = 2,
+			.pAttachments = attachments,
 
 			.width = window_default_width,
 			.height = window_default_height,
@@ -404,7 +520,7 @@ int veekay::run(const veekay::AppInfo& app_info) {
 		vk_framebuffers.resize(count);
 
 		for (size_t i = 0; i < count; ++i) {
-			info.pAttachments = &vk_swapchain_image_views[i];
+			attachments[0] = vk_swapchain_image_views[i];
 			if (vkCreateFramebuffer(vk_device, &info, nullptr, &vk_framebuffers[i]) != VK_SUCCESS) {
 				std::cerr << "Failed to create Vulkan framebuffer " << i << '\n';
 				return 1;
@@ -553,6 +669,13 @@ int veekay::run(const veekay::AppInfo& app_info) {
 			.pScissors = &scissor,
 		};
 
+		VkPipelineDepthStencilStateCreateInfo depth_info{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+			.depthTestEnable = true,
+			.depthWriteEnable = true,
+			.depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+		};
+
 		VkPipelineColorBlendStateCreateInfo blend_info{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
 
@@ -563,16 +686,8 @@ int veekay::run(const veekay::AppInfo& app_info) {
 			.pAttachments = &attachment_info
 		};
 
-		VkPushConstantRange push_consts{
-			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-			.size = sizeof(ShaderConstants),
-		};
-
 		VkPipelineLayoutCreateInfo layout_info{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-
-			.pushConstantRangeCount = 1,
-			.pPushConstantRanges = &push_consts,
 		};
 
 		if (vkCreatePipelineLayout(vk_device, &layout_info, nullptr, &vk_pipeline_layout) != VK_SUCCESS) {
@@ -589,6 +704,7 @@ int veekay::run(const veekay::AppInfo& app_info) {
 			.pViewportState = &viewport_info,
 			.pRasterizationState = &raster_info,
 			.pMultisampleState = &sample_info,
+			.pDepthStencilState = &depth_info,
 			.pColorBlendState = &blend_info,
 			.layout = vk_pipeline_layout,
 			.renderPass = vk_render_pass,
@@ -602,16 +718,13 @@ int veekay::run(const veekay::AppInfo& app_info) {
 
 	while (!glfwWindowShouldClose(window)) {
 		glfwPollEvents();
+		double time = glfwGetTime();
 
 		ImGui_ImplVulkan_NewFrame();
 		ImGui_ImplGlfw_NewFrame();
 		ImGui::NewFrame();
 
-		static float param = 0.0f;
-
-		ImGui::Begin("Controls");
-		ImGui::SliderFloat("Parameter", &param, 0.0f, 1.0f);
-		ImGui::End();
+		app_info.update(time);
 
 		ImGui::Render();
 
@@ -626,6 +739,8 @@ int veekay::run(const veekay::AppInfo& app_info) {
 		                      nullptr, &swapchain_image_index);
 
 		VkCommandBuffer cmd = vk_command_buffers[swapchain_image_index];
+		app_info.render();
+
 		{ // NOTE: Our drawing
 			vkResetCommandBuffer(cmd, 0);
 
@@ -639,9 +754,10 @@ int veekay::run(const veekay::AppInfo& app_info) {
 			}
 
 			{ // NOTE: Use current swapchain framebuffer and clear it
-				VkClearValue clear_values{
-					.color = {{0.1f, 0.1f, 0.1f, 1.0f}},
-				};
+				VkClearValue clear_color{.color = {{0.1f, 0.1f, 0.1f, 1.0f}}};
+				VkClearValue clear_depth{.depthStencil = {1.0f, 0}};
+
+				VkClearValue clear_values[] = {clear_color, clear_depth};
 
 				VkRenderPassBeginInfo info{
 					.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -650,8 +766,8 @@ int veekay::run(const veekay::AppInfo& app_info) {
 					.renderArea = {
 						.extent = {window_default_width, window_default_height},
 					},
-					.clearValueCount = 1,
-					.pClearValues = &clear_values,
+					.clearValueCount = 2,
+					.pClearValues = clear_values,
 				};
 
 				vkCmdBeginRenderPass(cmd, &info, VK_SUBPASS_CONTENTS_INLINE);
@@ -659,14 +775,6 @@ int veekay::run(const veekay::AppInfo& app_info) {
 
 			{ // NOTE: Draw!
 				vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
-
-				ShaderConstants consts{
-					.param = param,
-				};
-				vkCmdPushConstants(cmd, vk_pipeline_layout,
-				                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-				                   0, sizeof(ShaderConstants), &consts);
-
 				vkCmdDraw(cmd, 3, 1, 0, 0);
 			}
 
@@ -744,14 +852,7 @@ int veekay::run(const veekay::AppInfo& app_info) {
 
 	vkDeviceWaitIdle(vk_device);
 
-	for (size_t i = 0, e = vk_swapchain_images.size(); i != e; ++i) {
-		vkDestroySemaphore(vk_device, vk_present_semaphores[i], nullptr);
-	}
-
-	for (size_t i = 0; i < max_frames_in_flight; ++i) {
-		vkDestroySemaphore(vk_device, vk_render_semaphores[i], nullptr);
-		vkDestroyFence(vk_device, vk_in_flight_fences[i], nullptr);
-	}
+	app_info.shutdown();
 
 	vkDestroyCommandPool(vk_device, vk_command_pool, nullptr);
 
@@ -760,13 +861,32 @@ int veekay::run(const veekay::AppInfo& app_info) {
 
 	vkDestroyShaderModule(vk_device, vk_fragment_shader_module, nullptr);
 	vkDestroyShaderModule(vk_device, vk_vertex_shader_module, nullptr);
+
+	for (size_t i = 0, e = vk_swapchain_images.size(); i != e; ++i) {
+		vkDestroySemaphore(vk_device, vk_present_semaphores[i], nullptr);
+	}
+
+	for (size_t i = 0; i < max_frames_in_flight; ++i) {
+		vkDestroySemaphore(vk_device, vk_render_semaphores[i], nullptr);
+		vkDestroyFence(vk_device, vk_in_flight_fences[i], nullptr);
+	}
 	
 	vkDestroyRenderPass(vk_device, vk_render_pass, nullptr);
 
+	vkDestroyImageView(vk_device, vk_image_depth_view, nullptr);
+	vkFreeMemory(vk_device, vk_image_depth_memory, nullptr);
+	vkDestroyImage(vk_device, vk_image_depth, nullptr);
+
+	vkDestroyCommandPool(vk_device, imgui_command_pool, nullptr);
+	vkDestroyRenderPass(vk_device, imgui_render_pass, nullptr);
+
 	for (size_t i = 0, e = vk_framebuffers.size(); i != e; ++i) {
 		vkDestroyFramebuffer(vk_device, vk_framebuffers[i], nullptr);
+		vkDestroyFramebuffer(vk_device, imgui_framebuffers[i], nullptr);
 		vkDestroyImageView(vk_device, vk_swapchain_image_views[i], nullptr);
 	}
+
+	vkDestroyDescriptorPool(vk_device, imgui_descriptor_pool, nullptr);
 	
 	vkDestroySwapchainKHR(vk_device, vk_swapchain, nullptr);
 	vkDestroyDevice(vk_device, nullptr);
