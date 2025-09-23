@@ -7,7 +7,14 @@
 
 #include <veekay/veekay.hpp>
 
+#include <imgui.h>
+#include <vulkan/vulkan_core.h>
+
 namespace {
+
+struct ShaderConstants {
+	float param;
+};
 
 VkShaderModule vk_vertex_shader_module;
 VkShaderModule vk_fragment_shader_module;
@@ -144,8 +151,15 @@ void initialize() {
 			.pAttachments = &attachment_info
 		};
 
+		VkPushConstantRange push_constants{
+			.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+			.size = sizeof(ShaderConstants),
+		};
+
 		VkPipelineLayoutCreateInfo layout_info{
 			.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+			.pushConstantRangeCount = 1,
+			.pPushConstantRanges = &push_constants,
 		};
 
 		if (vkCreatePipelineLayout(veekay::app.vk_device, &layout_info,
@@ -186,8 +200,12 @@ void shutdown() {
 	vkDestroyShaderModule(veekay::app.vk_device, vk_vertex_shader_module, nullptr);
 }
 
-void update(double time) {
+float param = 0.0f;
 
+void update(double time) {
+	ImGui::Begin("Controls:");
+	ImGui::SliderFloat("Parameter", &param, 0.0f, 1.0f);
+	ImGui::End();
 }
 
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
@@ -227,6 +245,13 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 
 	{ // NOTE: Draw!
 		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, vk_pipeline);
+
+		ShaderConstants constants{
+			.param = param,
+		};
+		vkCmdPushConstants(cmd, vk_pipeline_layout,
+		                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+		                   0, sizeof(ShaderConstants), &constants);
 		vkCmdDraw(cmd, 3, 1, 0, 0);
 	}
 

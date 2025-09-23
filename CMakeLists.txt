@@ -21,8 +21,6 @@ endif()
 
 set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD_REQUIRED TRUE CXX_STANDARD 20)
 
-add_subdirectory(testbed)
-
 FetchContent_Declare(
 	glfw
 	GIT_REPOSITORY https://github.com/glfw/glfw.git
@@ -50,6 +48,8 @@ set(GLFW_BUILD_DOCS OFF)
 
 FetchContent_MakeAvailable(glfw vk-bootstrap imgui)
 
+add_subdirectory(testbed)
+
 target_link_libraries(${PROJECT_NAME} PRIVATE
 	glfw
 	Vulkan::Vulkan
@@ -57,7 +57,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 )
 
 # Link ImGui
-target_include_directories(${PROJECT_NAME} PRIVATE ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
+target_include_directories(${PROJECT_NAME} PUBLIC ${imgui_SOURCE_DIR} ${imgui_SOURCE_DIR}/backends)
 target_sources(${PROJECT_NAME} PRIVATE
 	${imgui_SOURCE_DIR}/backends/imgui_impl_glfw.cpp
 	${imgui_SOURCE_DIR}/backends/imgui_impl_vulkan.cpp
@@ -66,30 +66,3 @@ target_sources(${PROJECT_NAME} PRIVATE
 	${imgui_SOURCE_DIR}/imgui_tables.cpp
 	${imgui_SOURCE_DIR}/imgui_widgets.cpp
 )
-
-# Compile shaders
-find_program(GLSLC_FOUND glslc)
-if(GLSLC_FOUND)
-	set(_SHADER_BINARIES)
-
-	macro(compile_shader SHADER_FILE)
-		set(SHADER_SOURCE ${CMAKE_SOURCE_DIR}/shaders/${SHADER_FILE})
-		set(SHADER_BINARY ${SHADER_FILE}.spv)
-		set(SHADER_BINARY_PATH ${CMAKE_SOURCE_DIR}/shaders/${SHADER_BINARY})
-
-		add_custom_command(
-			OUTPUT ${SHADER_BINARY_PATH}
-			COMMAND glslc ${SHADER_SOURCE} -o ${SHADER_BINARY_PATH}
-			DEPENDS ${SHADER_SOURCE}
-			COMMENT "Compiling ${SHADER_FILE} shader"
-		)
-
-		list(APPEND _SHADER_BINARIES ${SHADER_BINARY_PATH})
-	endmacro()
-
-	compile_shader(shader.vert)
-	compile_shader(shader.frag)
-
-	add_custom_target(shaders DEPENDS ${_SHADER_BINARIES})
-	add_dependencies(veekay shaders)
-endif()

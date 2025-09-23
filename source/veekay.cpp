@@ -213,8 +213,8 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 				.storeOp = VK_ATTACHMENT_STORE_OP_STORE,
 				.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
 				.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-				.initialLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
-				.finalLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+				.initialLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+				.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
 			};
 
 			VkAttachmentReference ref{
@@ -614,7 +614,6 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		app_info.render(cmd, vk_framebuffers[swapchain_image_index]);
 
 		VkCommandBuffer imgui_cmd = imgui_command_buffers[swapchain_image_index];
-#if 0
 		{ // NOTE: Draw ImGui
 			vkResetCommandBuffer(imgui_cmd, 0);
 
@@ -645,7 +644,6 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			vkCmdEndRenderPass(imgui_cmd);
 			vkEndCommandBuffer(imgui_cmd);
 		}
-#endif
 
 		{ // NOTE: Submit commands to graphics queue
 			VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -657,7 +655,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 				.waitSemaphoreCount = 1,
 				.pWaitSemaphores = &vk_render_semaphores[vk_current_frame],
 				.pWaitDstStageMask = &wait_stage,
-				.commandBufferCount = 1,
+				.commandBufferCount = 2,
 				.pCommandBuffers = buffers,
 				.signalSemaphoreCount = 1,
 				.pSignalSemaphores = &vk_present_semaphores[swapchain_image_index],
