@@ -45,3 +45,48 @@ Run one those commands, depending on which preset you chose:
 cmake --build build-debug --parallel # for debug
 cmake --build build-release --parallel # for release
 ```
+
+## Project structure
+
+### Overview
+
+Veekay consists of two parts: library and application
+
+* `source` directory contains library code
+* `testbed` directory contains application code
+
+Library code contains most of the boilerplate for GLFW, Vulkan and ImGui initialization.
+Veekay library also takes care of managing swapchain and giving you relevant
+`VkCommandBuffer` and `VkFramebuffer` for you to submit/render to.
+
+However, the majority of your work will happen in `testbed`.
+This is where you will write most of your application code.
+It is already linked with Veekay library and contains its own `CMakeLists.txt`
+build recipe for you to modify.
+
+### Application code
+
+`veekay.hpp` header exposes library functionality through a set of callbacks
+(`init`, `shutdown`, `update`, `render`) and global variable `app`.
+
+Look for `testbed/main.cpp`, this is where you start.
+
+`veekay::Application` contains important data like window size, `VkDevice`,
+`VkPhysicalDevice` and `VkRenderPass` (associated with a swapchain).
+
+So, say you want to create a `VkBuffer`. This is how you would do it:
+
+```c++
+// You fill info struct before calling vkCreateXXX
+vkCreateBuffer(veekay::app.vk_device, &info, nullptr, &vertex_buffer);
+```
+
+Notice the `veekay::app.vk_device`, `veekay` is a library namespace,
+`app` is a global state variable provided by Veekay and `vk_device` is
+a `VkDevice` contained in `app` variable.
+
+### Compiling shaders
+
+`testbed/CMakeLists.txt` has build recipe for compiling shader files
+along with an application. Look for a comment in this file to see
+how to compile your shaders.
