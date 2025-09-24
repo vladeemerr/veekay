@@ -85,6 +85,14 @@ Notice the `veekay::app.vk_device`, `veekay` is a library namespace,
 `app` is a global state variable provided by Veekay and `vk_device` is
 a `VkDevice` contained in `app` variable.
 
+### Running
+
+`build-xxx/testbed` will contain the executable after successful build
+
+**Make sure your working directory is set to the project root!**
+Project root is where this README file resides. Otherwise, the
+code responsible for loading shaders from files will fail, because relative paths are used.
+
 ### Compiling shaders
 
 `testbed/CMakeLists.txt` has build recipe for compiling shader files
