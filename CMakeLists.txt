@@ -12,6 +12,8 @@ target_include_directories(${PROJECT_NAME} PUBLIC
 
 if(LINUX)
 	target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+elseif(APPLE)
+	target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 elseif(MSVC)
 	target_compile_options(${PROJECT_NAME} PRIVATE /W4)
 	target_link_options(${PROJECT_NAME} PRIVATE /subsystem:windows /entry:mainCRTStartup)
