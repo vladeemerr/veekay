@@ -168,6 +168,7 @@ VulkanBuffer createBuffer(size_t size, void *data, VkBufferUsageFlags usage) {
 	VulkanBuffer result{};
 
 	{
+		// NOTE: We create a buffer of specific usage with specified size
 		VkBufferCreateInfo info{
 			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
 			.size = size,
@@ -181,16 +182,27 @@ VulkanBuffer createBuffer(size_t size, void *data, VkBufferUsageFlags usage) {
 		}
 	}
 
+	// NOTE: Creating a buffer does not allocate memory,
+	//       only a buffer **object** was created.
+	//       So, we allocate memory for the buffer
+
 	{
+		// NOTE: Ask buffer about its memory requirements
 		VkMemoryRequirements requirements;
 		vkGetBufferMemoryRequirements(device, result.buffer, &requirements);
 
+		// NOTE: Ask GPU about types of memory it supports
 		VkPhysicalDeviceMemoryProperties properties;
 		vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
 
+		// NOTE: We want type of memory which is visible to both CPU and GPU
+		// NOTE: HOST is CPU, DEVICE is GPU; we are interested in "CPU" visible memory
+		// NOTE: COHERENT means that CPU cache will be invalidated upon mapping memory region
 		const VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
 		                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
 
+		// NOTE: Linear search through types of memory until
+		//       one type matches the requirements, thats the index of memory type
 		uint32_t index = UINT_MAX;
 		for (uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
 			const VkMemoryType& type = properties.memoryTypes[i];
@@ -207,6 +219,7 @@ VulkanBuffer createBuffer(size_t size, void *data, VkBufferUsageFlags usage) {
 			return {};
 		}
 
+		// NOTE: Allocate required memory amount in appropriate memory type
 		VkMemoryAllocateInfo info{
 			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
 			.allocationSize = requirements.size,
@@ -218,14 +231,18 @@ VulkanBuffer createBuffer(size_t size, void *data, VkBufferUsageFlags usage) {
 			return {};
 		}
 
+		// NOTE: Link allocated memory with a buffer
 		if (vkBindBufferMemory(device, result.buffer, result.memory, 0) != VK_SUCCESS) {
 			std::cerr << "Failed to bind Vulkan  buffer memory\n";
 			return {};
 		}
 
+		// NOTE: Get pointer to allocated memory
 		void* device_data;
 		vkMapMemory(device, result.memory, 0, requirements.size, 0, &device_data);
+
 		memcpy(device_data, data, size);
+
 		vkUnmapMemory(device, result.memory);
 	}
 
