@@ -1,9 +1,11 @@
 #include <cstdint>
 #include <climits>
+#include <utility>
 #include <vector>
 #include <iostream>
 #include <fstream>
 #include <cmath>
+#include <vector>
 
 #include <veekay/veekay.hpp>
 
@@ -11,6 +13,8 @@
 #include <vulkan/vulkan_core.h>
 
 namespace {
+
+using std::vector;
 
 constexpr float camera_fov = 70.0f;
 constexpr float camera_near_plane = 0.01f;
@@ -26,6 +30,7 @@ struct Vector {
 
 struct Vertex {
 	Vector position;
+    Vector color;
 	// NOTE: You can add more attributes
 };
 
@@ -62,6 +67,7 @@ Matrix identity() {
 	result.m[1][1] = 1.0f;
 	result.m[2][2] = 1.0f;
 	result.m[3][3] = 1.0f;
+
 	
 	return result;
 }
@@ -135,6 +141,80 @@ Matrix multiply(const Matrix& a, const Matrix& b) {
 
 	return result;
 }
+
+
+float hueToRgb(float p, float q, float t) {
+  if (t < 0) t += 1;
+  if (t > 1) t -= 1;
+  if (t < 1.0/6) return p + (q - p) * 6 * t;
+  if (t < 1.0/2) return q;
+  if (t < 2.0/3) return p + (q - p) * (2.0/3 - t) * 6;
+  return p;
+}
+
+constexpr Vector hslToRgb(Vector hsl) {
+    Vector rgb;
+
+  if (hsl.y == 0) {
+        rgb.x = hsl.z;
+        rgb.y = hsl.z;
+        rgb.z = hsl.z;
+  } else {
+    float q = hsl.z < 0.5 ? hsl.z * (1 + hsl.y) : hsl.z + hsl.y - hsl.z * hsl.y;
+    float p = 2 * hsl.z - q;
+    rgb.x = hueToRgb(p, q, hsl.x + 1.0/3);
+    rgb.y = hueToRgb(p, q, hsl.x);
+    rgb.z = hueToRgb(p, q, hsl.x - 1.0/3);
+  }
+
+  return rgb;
+}
+
+
+struct Shape {
+    vector<Vertex> vertices;
+    vector<uint32_t> indices;
+};
+
+constexpr Shape generateCone() {
+    vector<Vertex> vertices = {
+		{{0.0f, 0.0f, 0.0f}, hslToRgb({0.0f, 0.0f, 1.0f})}, // start with the top
+		{{1.0f, 0.0f, 0.0f}, hslToRgb({0.0f, 0.0f, 0.8f})}, // bottom center 
+	};
+    float radius = 1;
+    uint32_t n_vertices = 100;
+    for (int i = 0; i <= n_vertices; i++) {
+        float degree = 2 * i * M_PI / n_vertices;
+        vertices.push_back({
+            {1.0f, radius * sin(degree), radius * cos(degree)},
+            hslToRgb({float(i) / n_vertices, 0.9, 0.5})
+        });
+    }
+	vector<uint32_t> indices;
+
+    // sides
+    for (int i = 2; i < vertices.size() - 1; i++) {
+        indices.push_back(0);  
+        indices.push_back(i+1); 
+        indices.push_back(i); 
+    }
+
+    for (int i = 2; i < vertices.size() - 1; i++) {
+        indices.push_back(1);  
+        indices.push_back(i); 
+        indices.push_back(i+1); 
+    }
+
+
+    Shape sh = {
+        .vertices = vertices,
+        .indices = indices
+    };
+    return sh;
+}
+
+Shape shape;
+
 
 // NOTE: Loads shader byte code from file
 // NOTE: Your shaders are compiled via CMake with this code too, look it up
@@ -309,14 +389,12 @@ void initialize() {
 				.offset = offsetof(Vertex, position), // NOTE: Offset of "position" field in a Vertex struct
 			},
 			// NOTE: If you want more attributes per vertex, declare them here
-#if 0
 			{
 				.location = 1, // NOTE: Second attribute
 				.binding = 0,
-				.format = VK_FORMAT_XXX,
-				.offset = offset(Vertex, your_attribute),
+				.format = VK_FORMAT_R32G32B32_SFLOAT,
+				.offset = offsetof(Vertex, color),
 			},
-#endif
 		};
 
 		// NOTE: Bring 
@@ -461,19 +539,15 @@ void initialize() {
 	//  |   `--,   |
 	//  |       \  |
 	// (v3)------(v2)
-	Vertex vertices[] = {
-		{{-1.0f, -1.0f, 0.0f}},
-		{{1.0f, -1.0f, 0.0f}},
-		{{1.0f, 1.0f, 0.0f}},
-		{{-1.0f, 1.0f, 0.0f}},
-	};
+    //
 
-	uint32_t indices[] = { 0, 1, 2, 2, 3, 0 };
+    shape = generateCone();
+	
 
-	vertex_buffer = createBuffer(sizeof(vertices), vertices,
+	vertex_buffer = createBuffer(shape.vertices.size() * sizeof(Vertex), shape.vertices.data(),
 	                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
-	index_buffer = createBuffer(sizeof(indices), indices,
+	index_buffer = createBuffer(shape.indices.size() * sizeof(uint32_t), shape.indices.data(),
 	                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 }
 
@@ -574,7 +648,7 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 		                   0, sizeof(ShaderConstants), &constants);
 
 		// NOTE: Draw 6 indices (3 vertices * 2 triangles), 1 group, no offsets
-		vkCmdDrawIndexed(cmd, 6, 1, 0, 0, 0);
+		vkCmdDrawIndexed(cmd, shape.indices.size(), 1, 0, 0, 0);
 	}
 
 	vkCmdEndRenderPass(cmd);
