@@ -1,6 +1,6 @@
+#include <algorithm>
 #include <cstdint>
 #include <climits>
-#include <utility>
 #include <vector>
 #include <iostream>
 #include <fstream>
@@ -39,6 +39,7 @@ struct ShaderConstants {
 	Matrix projection;
 	Matrix transform;
 	Vector color;
+    bool override;
 };
 
 struct VulkanBuffer {
@@ -55,10 +56,10 @@ VkPipeline pipeline;
 VulkanBuffer vertex_buffer;
 VulkanBuffer index_buffer;
 
-Vector model_position = {0.0f, 0.0f, 5.0f};
-float model_rotation;
-Vector model_color = {0.5f, 1.0f, 0.7f };
-bool model_spin = true;
+float model_rotation = 0;
+float model_rotation_speed = 0.5;
+bool pause = true;
+bool reverse = false;
 
 Matrix identity() {
 	Matrix result{};
@@ -142,6 +143,15 @@ Matrix multiply(const Matrix& a, const Matrix& b) {
 	return result;
 }
 
+Matrix scale(float scale) {
+    Matrix result{};
+	result.m[0][0] = scale;
+	result.m[1][1] = scale;
+	result.m[2][2] = scale;
+	result.m[3][3] = 1;
+	return result;
+}
+
 
 float hueToRgb(float p, float q, float t) {
   if (t < 0) t += 1;
@@ -174,12 +184,14 @@ constexpr Vector hslToRgb(Vector hsl) {
 struct Shape {
     vector<Vertex> vertices;
     vector<uint32_t> indices;
+    int top;
+    int bottom;
 };
 
 constexpr Shape generateCone() {
     vector<Vertex> vertices = {
-		{{0.0f, 0.0f, 0.0f}, hslToRgb({0.0f, 0.0f, 1.0f})}, // start with the top
-		{{1.0f, 0.0f, 0.0f}, hslToRgb({0.0f, 0.0f, 0.8f})}, // bottom center 
+		{{-1.0f, 0.0f, 0.0f}, hslToRgb({0.0f, 0.0f, 1.0f})}, // start with the top
+		{{1.0f, 0.0f, 0.0f}, hslToRgb({0.0f, 0.0f, 1.0f})}, // bottom center 
 	};
     float radius = 1;
     uint32_t n_vertices = 100;
@@ -191,6 +203,7 @@ constexpr Shape generateCone() {
         });
     }
 	vector<uint32_t> indices;
+    Shape sh;
 
     // sides
     for (int i = 2; i < vertices.size() - 1; i++) {
@@ -198,18 +211,16 @@ constexpr Shape generateCone() {
         indices.push_back(i+1); 
         indices.push_back(i); 
     }
+    sh.top = indices.size();
 
     for (int i = 2; i < vertices.size() - 1; i++) {
         indices.push_back(1);  
         indices.push_back(i); 
         indices.push_back(i+1); 
     }
-
-
-    Shape sh = {
-        .vertices = vertices,
-        .indices = indices
-    };
+    sh.bottom = indices.size() - sh.top;
+    sh.vertices = vertices;
+    sh.indices = indices;
     return sh;
 }
 
@@ -564,20 +575,74 @@ void shutdown() {
 	vkDestroyShaderModule(device, vertex_shader_module, nullptr);
 }
 
-void update(double time) {
-	ImGui::Begin("Controls:");
-	ImGui::InputFloat3("Translation", reinterpret_cast<float*>(&model_position));
-	ImGui::SliderFloat("Rotation", &model_rotation, 0.0f, 2.0f * M_PI);
-	ImGui::Checkbox("Spin?", &model_spin);
-	// TODO: Your GUI stuff here
-	ImGui::End();
+double time_prev;
 
-	// NOTE: Animation code and other runtime variable updates go here
-	if (model_spin) {
-		model_rotation = float(time);
-	}
+void update(double time) {
+    ImGui::Begin("Controls:");
+	ImGui::SliderFloat("RotationSpeed", &model_rotation_speed, 0.0f, 2.0f);
+    ImGui::Checkbox("Pause", &pause);
+    ImGui::Checkbox("Reverse", &reverse);
+    if (ImGui::IsKeyPressed(ImGuiKey_Space)) 
+        pause = !pause;
+    if (ImGui::IsKeyPressed(ImGuiKey_LeftArrow)) 
+        model_rotation_speed = std::max(0.0, model_rotation_speed - 0.1);
+    if (ImGui::IsKeyPressed(ImGuiKey_RightArrow)) 
+        model_rotation_speed = std::min(2.0, model_rotation_speed + 0.1);
+    if (ImGui::IsKeyPressed(ImGuiKey_RightCtrl)) 
+        reverse = !reverse;
+
+    ImGui::End();
+
+
+    int coef = reverse ? -1 : 1;
+    float speed = model_rotation_speed * M_PI * 2;
+    float delta = time - time_prev;
+
+    if (!pause)
+        model_rotation += coef * delta * speed;
+    time_prev = time;
 
 	model_rotation = fmodf(model_rotation, 2.0f * M_PI);
+}
+
+void drawCone(VkCommandBuffer &cmd, float scale_v, Vector bottom_color, Vector position, Vector rotation_axis, Vector initial_rotation, float initial_rotation_v) {
+    // NOTE: Use our new shiny graphics pipeline
+    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+
+    // NOTE: Use our quad vertex buffer
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer.buffer, &offset);
+
+    // NOTE: Use our quad index buffer
+    vkCmdBindIndexBuffer(cmd, index_buffer.buffer, offset, VK_INDEX_TYPE_UINT32);
+    ShaderConstants constants{
+			.projection = projection(
+				camera_fov,
+				float(veekay::app.window_width) / float(veekay::app.window_height),
+				camera_near_plane, camera_far_plane),
+
+			.transform = multiply(
+                            rotation(rotation_axis, model_rotation), 
+                            multiply(
+                                rotation(initial_rotation, initial_rotation_v),
+                                multiply(
+                                     scale(scale_v), translation(position)))),
+
+			.color = bottom_color,
+            .override = false
+		};
+
+    vkCmdPushConstants(cmd, pipeline_layout,
+                       VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+                       0, sizeof(ShaderConstants), &constants);
+    vkCmdDrawIndexed(cmd, shape.top, 1, 0, 0, 0);
+    constants.override = true;
+    vkCmdPushConstants(cmd, pipeline_layout,
+               VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+               0, sizeof(ShaderConstants), &constants);
+    vkCmdDrawIndexed(cmd, shape.bottom, 1, shape.top, 0, 0);
+
 }
 
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
@@ -618,37 +683,9 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 	// TODO: Vulkan rendering code here
 	// NOTE: ShaderConstant updates, vkCmdXXX expected to be here
 	{
-		// NOTE: Use our new shiny graphics pipeline
-		vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-
-		// NOTE: Use our quad vertex buffer
-		VkDeviceSize offset = 0;
-		vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer.buffer, &offset);
-
-		// NOTE: Use our quad index buffer
-		vkCmdBindIndexBuffer(cmd, index_buffer.buffer, offset, VK_INDEX_TYPE_UINT32);
-
-		// NOTE: Variables like model_XXX were declared globally
-		ShaderConstants constants{
-			.projection = projection(
-				camera_fov,
-				float(veekay::app.window_width) / float(veekay::app.window_height),
-				camera_near_plane, camera_far_plane),
-
-			.transform = multiply(rotation({0.0f, 1.0f, 0.0f}, model_rotation),
-			                      translation(model_position)),
-
-			.color = model_color,
-		};
-
-		// NOTE: Update constant memory with new shader constants
-		vkCmdPushConstants(cmd, pipeline_layout,
-		                   VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-		                   0, sizeof(ShaderConstants), &constants);
-
-		// NOTE: Draw 6 indices (3 vertices * 2 triangles), 1 group, no offsets
-		vkCmdDrawIndexed(cmd, shape.indices.size(), 1, 0, 0, 0);
+        drawCone(cmd, 1, {0.0, 0.8, 0.6}, {2, 0, 5}, {0, 1, 0}, {1, 1, 1}, M_PI);
+        drawCone(cmd, 0.9, {0.9, 0.8, 0.1}, {0, 2, 5}, {0, 0, 1}, {1, 0, 0}, 0);
+        drawCone(cmd, 0.5, {0.9, 0.0, 1.0}, {-1, 0, 3}, {1, 0, 0}, {1, 1, 0}, M_PI/8);
 	}
 
 	vkCmdEndRenderPass(cmd);

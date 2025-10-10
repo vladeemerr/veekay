@@ -11,8 +11,13 @@ layout (push_constant, std430) uniform ShaderConstants {
 	mat4 projection;
 	mat4 transform;
 	vec3 color;
+    bool override;
 };
 
 void main() {
-	final_color = vec4(v_color, 1.0f);
+    if (override) {
+        final_color = vec4(color, 1.0f);
+    } else {
+        final_color = vec4(v_color, 1.0f);
+    }
 }
