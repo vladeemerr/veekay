@@ -1,7 +1,7 @@
 #version 450
 
 // NOTE: out attributes of vertex shader must be in's
-// layout (location = 0) in type name;
+layout (location = 0) in vec3 v_color;
 
 // NOTE: Pixel color
 layout (location = 0) out vec4 final_color;
@@ -11,8 +11,13 @@ layout (push_constant, std430) uniform ShaderConstants {
 	mat4 projection;
 	mat4 transform;
 	vec3 color;
+    bool override;
 };
 
 void main() {
-	final_color = vec4(color, 1.0f);
+    if (override) {
+        final_color = vec4(color, 1.0f);
+    } else {
+        final_color = vec4(v_color, 1.0f);
+    }
 }
