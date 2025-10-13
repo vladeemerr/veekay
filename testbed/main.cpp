@@ -3,7 +3,9 @@
 #include <vector>
 #include <iostream>
 #include <fstream>
-#include <cmath>
+
+#define _USE_MATH_DEFINES
+#include <math.h>
 
 #include <veekay/veekay.hpp>
 
