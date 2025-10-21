@@ -63,15 +63,14 @@ Buffer::Buffer(size_t size, void* data, VkBufferUsageFlags usage) {
 			throw std::runtime_error("Failed to bind Vulkan buffer memory");
 		}
 
-		void* device_data;
-		if (vkMapMemory(device, memory, 0, requirements.size, 0, &device_data) != VK_SUCCESS) {
+		if (vkMapMemory(device, memory, 0, requirements.size, 0, &mapped_region) != VK_SUCCESS) {
 			throw std::runtime_error("Failed to map Vulkan buffer memory");
 		}
 
-		std::copy(static_cast<char*>(data), static_cast<char*>(data) + size,
-		          static_cast<char*>(device_data));
-
-		vkUnmapMemory(device, memory);
+		if (data != nullptr) {
+			std::copy(static_cast<char*>(data), static_cast<char*>(data) + size,
+			          static_cast<char*>(mapped_region));
+		}
 	}
 }
 
