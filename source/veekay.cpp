@@ -66,8 +66,18 @@ std::vector<VkCommandBuffer> vk_command_buffers;
 
 } // namespace
 
-// NOTE: Global application state definition
-veekay::Application veekay::app;
+namespace veekay {
+
+Application app;
+
+namespace input {
+
+void setup(void* const window_ptr);
+void cache();
+
+} // namespace input
+
+} // namespace veekay
 
 int veekay::run(const veekay::ApplicationInfo& app_info) {
 	veekay::app.running = true;
@@ -86,17 +96,19 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		std::cerr << "Failed to create GLFW window\n";
 		return 1;
 	}
-    /*
-        needed because otherwise on macos everything will be rendered in the top
-        corner of the application window
-    */
 
-    int framebuffer_actual_width, framebuffer_actual_height;
-    glfwGetFramebufferSize(window, &framebuffer_actual_width,
-                         &framebuffer_actual_height);
+	veekay::input::setup(window);
+	/* NOTE:
+		needed because otherwise on macos everything will be rendered in the top
+		corner of the application window
+	*/
 
-    uint32_t window_default_width = framebuffer_actual_width;
-    uint32_t window_default_height = framebuffer_actual_height;
+	int framebuffer_actual_width, framebuffer_actual_height;
+	glfwGetFramebufferSize(window, &framebuffer_actual_width,
+	                     &framebuffer_actual_height);
+
+	uint32_t window_default_width = framebuffer_actual_width;
+	uint32_t window_default_height = framebuffer_actual_height;
  
 	veekay::app.window_width = window_default_width;
 	veekay::app.window_height = window_default_height;
@@ -599,6 +611,8 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 	app_info.init();
 
 	while (veekay::app.running && !glfwWindowShouldClose(window)) {
+		veekay::input::cache();
+		
 		glfwPollEvents();
 		double time = glfwGetTime();
 

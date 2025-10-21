@@ -18,29 +18,16 @@ constexpr float camera_fov = 70.0f;
 constexpr float camera_near_plane = 0.01f;
 constexpr float camera_far_plane = 100.0f;
 
-struct Matrix {
-	float m[4][4];
-};
-
-struct Vector {
-	float x, y, z;
-};
-
 struct Vertex {
-	Vector position;
+	veekay::vec3 position;
 	// NOTE: You can add more attributes
 };
 
 // NOTE: These variable will be available to shaders through push constant uniform
 struct ShaderConstants {
-	Matrix projection;
-	Matrix transform;
-	Vector color;
-};
-
-struct VulkanBuffer {
-	VkBuffer buffer;
-	VkDeviceMemory memory;
+	veekay::mat4 projection;
+	veekay::mat4 transform;
+	veekay::vec3 color;
 };
 
 VkShaderModule vertex_shader_module;
@@ -49,94 +36,13 @@ VkPipelineLayout pipeline_layout;
 VkPipeline pipeline;
 
 // NOTE: Declare buffers and other variables here
-VulkanBuffer vertex_buffer;
-VulkanBuffer index_buffer;
+veekay::graphics::Buffer* vertex_buffer;
+veekay::graphics::Buffer* index_buffer;
 
-Vector model_position = {0.0f, 0.0f, 5.0f};
+veekay::vec3 model_position = {0.0f, 0.0f, 5.0f};
 float model_rotation;
-Vector model_color = {0.5f, 1.0f, 0.7f };
+veekay::vec3 model_color = {0.5f, 1.0f, 0.7f };
 bool model_spin = true;
-
-Matrix identity() {
-	Matrix result{};
-
-	result.m[0][0] = 1.0f;
-	result.m[1][1] = 1.0f;
-	result.m[2][2] = 1.0f;
-	result.m[3][3] = 1.0f;
-	
-	return result;
-}
-
-Matrix projection(float fov, float aspect_ratio, float near, float far) {
-	Matrix result{};
-
-	const float radians = fov * M_PI / 180.0f;
-	const float cot = 1.0f / tanf(radians / 2.0f);
-
-	result.m[0][0] = cot / aspect_ratio;
-	result.m[1][1] = cot;
-	result.m[2][3] = 1.0f;
-
-	result.m[2][2] = far / (far - near);
-	result.m[3][2] = (-near * far) / (far - near);
-
-	return result;
-}
-
-Matrix translation(Vector vector) {
-	Matrix result = identity();
-
-	result.m[3][0] = vector.x;
-	result.m[3][1] = vector.y;
-	result.m[3][2] = vector.z;
-
-	return result;
-}
-
-Matrix rotation(Vector axis, float angle) {
-	Matrix result{};
-
-	float length = sqrtf(axis.x * axis.x + axis.y * axis.y + axis.z * axis.z);
-
-	axis.x /= length;
-	axis.y /= length;
-	axis.z /= length;
-
-	float sina = sinf(angle);
-	float cosa = cosf(angle);
-	float cosv = 1.0f - cosa;
-
-	result.m[0][0] = (axis.x * axis.x * cosv) + cosa;
-	result.m[0][1] = (axis.x * axis.y * cosv) + (axis.z * sina);
-	result.m[0][2] = (axis.x * axis.z * cosv) - (axis.y * sina);
-
-	result.m[1][0] = (axis.y * axis.x * cosv) - (axis.z * sina);
-	result.m[1][1] = (axis.y * axis.y * cosv) + cosa;
-	result.m[1][2] = (axis.y * axis.z * cosv) + (axis.x * sina);
-
-	result.m[2][0] = (axis.z * axis.x * cosv) + (axis.y * sina);
-	result.m[2][1] = (axis.z * axis.y * cosv) - (axis.x * sina);
-	result.m[2][2] = (axis.z * axis.z * cosv) + cosa;
-
-	result.m[3][3] = 1.0f;
-
-	return result;
-}
-
-Matrix multiply(const Matrix& a, const Matrix& b) {
-	Matrix result{};
-
-	for (int j = 0; j < 4; j++) {
-		for (int i = 0; i < 4; i++) {
-			for (int k = 0; k < 4; k++) {
-				result.m[j][i] += a.m[j][k] * b.m[k][i];
-			}
-		}
-	}
-
-	return result;
-}
 
 // NOTE: Loads shader byte code from file
 // NOTE: Your shaders are compiled via CMake with this code too, look it up
@@ -161,101 +67,6 @@ VkShaderModule loadShaderModule(const char* path) {
 	}
 
 	return result;
-}
-
-VulkanBuffer createBuffer(size_t size, void *data, VkBufferUsageFlags usage) {
-	VkDevice& device = veekay::app.vk_device;
-	VkPhysicalDevice& physical_device = veekay::app.vk_physical_device;
-	
-	VulkanBuffer result{};
-
-	{
-		// NOTE: We create a buffer of specific usage with specified size
-		VkBufferCreateInfo info{
-			.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-			.size = size,
-			.usage = usage,
-			.sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-		};
-
-		if (vkCreateBuffer(device, &info, nullptr, &result.buffer) != VK_SUCCESS) {
-			std::cerr << "Failed to create Vulkan buffer\n";
-			return {};
-		}
-	}
-
-	// NOTE: Creating a buffer does not allocate memory,
-	//       only a buffer **object** was created.
-	//       So, we allocate memory for the buffer
-
-	{
-		// NOTE: Ask buffer about its memory requirements
-		VkMemoryRequirements requirements;
-		vkGetBufferMemoryRequirements(device, result.buffer, &requirements);
-
-		// NOTE: Ask GPU about types of memory it supports
-		VkPhysicalDeviceMemoryProperties properties;
-		vkGetPhysicalDeviceMemoryProperties(physical_device, &properties);
-
-		// NOTE: We want type of memory which is visible to both CPU and GPU
-		// NOTE: HOST is CPU, DEVICE is GPU; we are interested in "CPU" visible memory
-		// NOTE: COHERENT means that CPU cache will be invalidated upon mapping memory region
-		const VkMemoryPropertyFlags flags = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
-		                                    VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
-
-		// NOTE: Linear search through types of memory until
-		//       one type matches the requirements, thats the index of memory type
-		uint32_t index = UINT_MAX;
-		for (uint32_t i = 0; i < properties.memoryTypeCount; ++i) {
-			const VkMemoryType& type = properties.memoryTypes[i];
-
-			if ((requirements.memoryTypeBits & (1 << i)) &&
-			    (type.propertyFlags & flags) == flags) {
-				index = i;
-				break;
-			}
-		}
-
-		if (index == UINT_MAX) {
-			std::cerr << "Failed to find required memory type to allocate Vulkan buffer\n";
-			return {};
-		}
-
-		// NOTE: Allocate required memory amount in appropriate memory type
-		VkMemoryAllocateInfo info{
-			.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-			.allocationSize = requirements.size,
-			.memoryTypeIndex = index,
-		};
-
-		if (vkAllocateMemory(device, &info, nullptr, &result.memory) != VK_SUCCESS) {
-			std::cerr << "Failed to allocate Vulkan buffer memory\n";
-			return {};
-		}
-
-		// NOTE: Link allocated memory with a buffer
-		if (vkBindBufferMemory(device, result.buffer, result.memory, 0) != VK_SUCCESS) {
-			std::cerr << "Failed to bind Vulkan  buffer memory\n";
-			return {};
-		}
-
-		// NOTE: Get pointer to allocated memory
-		void* device_data;
-		vkMapMemory(device, result.memory, 0, requirements.size, 0, &device_data);
-
-		memcpy(device_data, data, size);
-
-		vkUnmapMemory(device, result.memory);
-	}
-
-	return result;
-}
-
-void destroyBuffer(const VulkanBuffer& buffer) {
-	VkDevice& device = veekay::app.vk_device;
-
-	vkFreeMemory(device, buffer.memory, nullptr);
-	vkDestroyBuffer(device, buffer.buffer, nullptr);
 }
 
 void initialize() {
@@ -310,15 +121,6 @@ void initialize() {
 				.format = VK_FORMAT_R32G32B32_SFLOAT, // NOTE: 3-component vector of floats
 				.offset = offsetof(Vertex, position), // NOTE: Offset of "position" field in a Vertex struct
 			},
-			// NOTE: If you want more attributes per vertex, declare them here
-#if 0
-			{
-				.location = 1, // NOTE: Second attribute
-				.binding = 0,
-				.format = VK_FORMAT_XXX,
-				.offset = offset(Vertex, your_attribute),
-			},
-#endif
 		};
 
 		// NOTE: Bring 
@@ -472,19 +274,19 @@ void initialize() {
 
 	uint32_t indices[] = { 0, 1, 2, 2, 3, 0 };
 
-	vertex_buffer = createBuffer(sizeof(vertices), vertices,
-	                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
+	vertex_buffer = new veekay::graphics::Buffer(sizeof(vertices), vertices,
+	                                             VK_BUFFER_USAGE_VERTEX_BUFFER_BIT);
 
-	index_buffer = createBuffer(sizeof(indices), indices,
-	                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
+	index_buffer = new veekay::graphics::Buffer(sizeof(indices), indices,
+	                                            VK_BUFFER_USAGE_INDEX_BUFFER_BIT);
 }
 
 void shutdown() {
 	VkDevice& device = veekay::app.vk_device;
 
 	// NOTE: Destroy resources here, do not cause leaks in your program!
-	destroyBuffer(index_buffer);
-	destroyBuffer(vertex_buffer);
+	delete index_buffer;
+	delete vertex_buffer;
 
 	vkDestroyPipeline(device, pipeline, nullptr);
 	vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
@@ -552,20 +354,20 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 
 		// NOTE: Use our quad vertex buffer
 		VkDeviceSize offset = 0;
-		vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer.buffer, &offset);
+		vkCmdBindVertexBuffers(cmd, 0, 1, &vertex_buffer->buffer, &offset);
 
 		// NOTE: Use our quad index buffer
-		vkCmdBindIndexBuffer(cmd, index_buffer.buffer, offset, VK_INDEX_TYPE_UINT32);
+		vkCmdBindIndexBuffer(cmd, index_buffer->buffer, offset, VK_INDEX_TYPE_UINT32);
 
 		// NOTE: Variables like model_XXX were declared globally
 		ShaderConstants constants{
-			.projection = projection(
+			.projection = veekay::mat4::projection(
 				camera_fov,
 				float(veekay::app.window_width) / float(veekay::app.window_height),
 				camera_near_plane, camera_far_plane),
 
-			.transform = multiply(rotation({0.0f, 1.0f, 0.0f}, model_rotation),
-			                      translation(model_position)),
+			.transform = veekay::mat4::rotation({0.0f, 1.0f, 0.0f}, model_rotation) *
+			             veekay::mat4::translation(model_position),
 
 			.color = model_color,
 		};
