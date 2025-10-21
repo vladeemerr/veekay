@@ -1,3 +1,4 @@
+#include "veekay/input.hpp"
 #include <cstdint>
 #include <climits>
 #include <vector>
@@ -12,12 +13,16 @@
 #include <imgui.h>
 #include <vulkan/vulkan_core.h>
 
+#include <lodepng.h>
+
 namespace {
 
 constexpr uint32_t max_models = 1024;
 
 struct Vertex {
 	veekay::vec3 position;
+	veekay::vec3 normal;
+	veekay::vec2 uv;
 	// NOTE: You can add more attributes
 };
 
@@ -48,6 +53,8 @@ struct Transform {
 struct Model {
 	Mesh mesh;
 	Transform transform;
+	veekay::graphics::Texture* texture;
+	VkSampler sampler;
 	veekay::vec3 albedo_color;
 };
 
@@ -96,6 +103,12 @@ inline namespace {
 
 	Mesh plane_mesh;
 	Mesh cube_mesh;
+
+	veekay::graphics::Texture* missing_texture;
+	VkSampler missing_texture_sampler;
+
+	veekay::graphics::Texture* texture;
+	VkSampler texture_sampler;
 }
 
 float toRadians(float degrees) {
@@ -149,7 +162,66 @@ VkShaderModule loadShaderModule(const char* path) {
 	return result;
 }
 
-void initialize() {
+void updateDescriptors(const veekay::graphics::Texture& texture,
+                       const VkSampler sampler) {
+	VkDevice& device = veekay::app.vk_device;
+
+	VkDescriptorBufferInfo buffer_infos[] = {
+		{
+			.buffer = scene_uniforms_buffer->buffer,
+			.offset = 0,
+			.range = sizeof(SceneUniforms),
+		},
+		{
+			.buffer = model_uniforms_buffer->buffer,
+			.offset = 0,
+			.range = sizeof(ModelUniforms),
+		},
+	};
+
+	VkDescriptorImageInfo image_infos[] = {
+		{
+			.sampler = sampler,
+			.imageView = texture.view,
+			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+		},
+	};
+
+	VkWriteDescriptorSet write_infos[] = {
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = descriptor_set,
+			.dstBinding = 0,
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+			.pBufferInfo = &buffer_infos[0],
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = descriptor_set,
+			.dstBinding = 1,
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+			.pBufferInfo = &buffer_infos[1],
+		},
+		{
+			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+			.dstSet = descriptor_set,
+			.dstBinding = 2,
+			.dstArrayElement = 0,
+			.descriptorCount = 1,
+			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+			.pImageInfo = &image_infos[0],
+		},
+	};
+
+	vkUpdateDescriptorSets(device, sizeof(write_infos) / sizeof(write_infos[0]),
+	                       write_infos, 0, nullptr);
+}
+
+void initialize(VkCommandBuffer cmd) {
 	VkDevice& device = veekay::app.vk_device;
 	VkPhysicalDevice& physical_device = veekay::app.vk_physical_device;
 
@@ -200,6 +272,18 @@ void initialize() {
 				.binding = 0, // NOTE: First vertex buffer
 				.format = VK_FORMAT_R32G32B32_SFLOAT, // NOTE: 3-component vector of floats
 				.offset = offsetof(Vertex, position), // NOTE: Offset of "position" field in a Vertex struct
+			},
+			{
+				.location = 1,
+				.binding = 0,
+				.format = VK_FORMAT_R32G32B32_SFLOAT,
+				.offset = offsetof(Vertex, normal),
+			},
+			{
+				.location = 2,
+				.binding = 0,
+				.format = VK_FORMAT_R32G32_SFLOAT,
+				.offset = offsetof(Vertex, uv),
 			},
 		};
 
@@ -300,6 +384,10 @@ void initialize() {
 					.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
 					.descriptorCount = 8,
 				},
+				{
+					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.descriptorCount = 8,
+				},
 			};
 			
 			VkDescriptorPoolCreateInfo info{
@@ -332,6 +420,12 @@ void initialize() {
 					.descriptorCount = 1,
 					.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
 				},
+				{
+					.binding = 2,
+					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+					.descriptorCount = 1,
+					.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+				},
 			};
 
 			VkDescriptorSetLayoutCreateInfo info{
@@ -361,55 +455,6 @@ void initialize() {
 				veekay::app.running = false;
 				return;
 			}
-		}
-
-		scene_uniforms_buffer = new veekay::graphics::Buffer(
-			sizeof(SceneUniforms),
-			nullptr,
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-
-		model_uniforms_buffer = new veekay::graphics::Buffer(
-			max_models * sizeof(ModelUniforms),
-			nullptr,
-			VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
-
-		{
-			VkDescriptorBufferInfo buffer_infos[] = {
-				{
-					.buffer = scene_uniforms_buffer->buffer,
-					.offset = 0,
-					.range = sizeof(SceneUniforms),
-				},
-				{
-					.buffer = model_uniforms_buffer->buffer,
-					.offset = 0,
-					.range = sizeof(ModelUniforms),
-				},
-			};
-
-			VkWriteDescriptorSet write_infos[] = {
-				{
-					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = descriptor_set,
-					.dstBinding = 0,
-					.dstArrayElement = 0,
-					.descriptorCount = 1,
-					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-					.pBufferInfo = &buffer_infos[0],
-				},
-				{
-					.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-					.dstSet = descriptor_set,
-					.dstBinding = 1,
-					.dstArrayElement = 0,
-					.descriptorCount = 1,
-					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-					.pBufferInfo = &buffer_infos[1],
-				},
-			};
-
-			vkUpdateDescriptorSets(device, sizeof(write_infos) / sizeof(write_infos[0]),
-			                       write_infos, 0, nullptr);
 		}
 
 		// NOTE: Declare external data sources, only push constants this time
@@ -451,6 +496,93 @@ void initialize() {
 		}
 	}
 
+	scene_uniforms_buffer = new veekay::graphics::Buffer(
+		sizeof(SceneUniforms),
+		nullptr,
+		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+
+	model_uniforms_buffer = new veekay::graphics::Buffer(
+		max_models * sizeof(ModelUniforms),
+		nullptr,
+		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
+
+	{
+		VkSamplerCreateInfo info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = VK_FILTER_NEAREST,
+			.minFilter = VK_FILTER_NEAREST,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.mipLodBias = 0.0f,
+			.anisotropyEnable = false,
+			.maxAnisotropy = 0.0f,
+			.compareEnable = false,
+			.compareOp = VK_COMPARE_OP_ALWAYS,
+			.minLod = 0.0f,
+			.maxLod = 0.0f,
+			.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+			.unnormalizedCoordinates = false,
+		};
+
+		if (vkCreateSampler(device, &info, nullptr, &missing_texture_sampler) != VK_SUCCESS) {
+			std::cerr << "Failed to create Vulkan texture sampler\n";
+			veekay::app.running = false;
+			return;
+		}
+
+		uint32_t pixels[] = {
+			0xff000000, 0xffff00ff,
+			0xffff00ff, 0xff000000,
+		};
+
+		missing_texture = new veekay::graphics::Texture(cmd, 2, 2,
+		                                                VK_FORMAT_B8G8R8A8_UNORM,
+		                                                pixels);
+	}
+
+	{
+		VkSamplerCreateInfo info{
+			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+			.magFilter = VK_FILTER_LINEAR,
+			.minFilter = VK_FILTER_LINEAR,
+			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.mipLodBias = 0.0f,
+			.anisotropyEnable = true,
+			.maxAnisotropy = 16.0f,
+			.compareEnable = false,
+			.compareOp = VK_COMPARE_OP_ALWAYS,
+			.minLod = 0.0f,
+			.maxLod = 0.0f,
+			.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
+			.unnormalizedCoordinates = false,
+		};
+
+		if (vkCreateSampler(device, &info, nullptr, &texture_sampler) != VK_SUCCESS) {
+			std::cerr << "Failed to create Vulkan texture sampler\n";
+			veekay::app.running = false;
+			return;
+		}
+
+		uint32_t width, height;
+		std::vector<uint8_t> pixels;
+		auto error = lodepng::decode(pixels, width, height, "./assets/lenna.png");
+		if (!error) {
+			texture = new veekay::graphics::Texture(cmd, width, height,
+			                                        VK_FORMAT_R8G8B8A8_UNORM,
+			                                        pixels.data());
+
+			updateDescriptors(*texture, texture_sampler);
+		} else {
+			updateDescriptors(*missing_texture, missing_texture_sampler);
+		}
+	}
+
+	
 	// NOTE: Plane mesh initialization
 	{
 		// (v0)------(v1)
@@ -459,10 +591,10 @@ void initialize() {
 		//  |       \  |
 		// (v3)------(v2)
 		std::vector<Vertex> vertices = {
-			{{-5.0f, 0.0f, 5.0f}},
-			{{5.0f, 0.0f, 5.0f}},
-			{{5.0f, 0.0f, -5.0f}},
-			{{-5.0f, 0.0f, -5.0f}},
+			{{-5.0f, 0.0f, 5.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+			{{5.0f, 0.0f, 5.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+			{{5.0f, 0.0f, -5.0f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
+			{{-5.0f, 0.0f, -5.0f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
 		};
 
 		std::vector<uint32_t> indices = {
@@ -483,35 +615,35 @@ void initialize() {
 	// NOTE: Cube mesh initialization
 	{
 		std::vector<Vertex> vertices = {
-			{{-0.5f, -0.5f, -0.5f}},
-			{{+0.5f, -0.5f, -0.5f}},
-			{{+0.5f, +0.5f, -0.5f}},
-			{{-0.5f, +0.5f, -0.5f}},
+			{{-0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 0.0f}},
+			{{+0.5f, -0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 0.0f}},
+			{{+0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {1.0f, 1.0f}},
+			{{-0.5f, +0.5f, -0.5f}, {0.0f, 0.0f, -1.0f}, {0.0f, 1.0f}},
 
-			{{+0.5f, -0.5f, -0.5f}},
-			{{+0.5f, -0.5f, +0.5f}},
-			{{+0.5f, +0.5f, +0.5f}},
-			{{+0.5f, +0.5f, -0.5f}},
+			{{+0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+			{{+0.5f, -0.5f, +0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+			{{+0.5f, +0.5f, +0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+			{{+0.5f, +0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
 
-			{{+0.5f, -0.5f, +0.5f}},
-			{{-0.5f, -0.5f, +0.5f}},
-			{{-0.5f, +0.5f, +0.5f}},
-			{{+0.5f, +0.5f, +0.5f}},
+			{{+0.5f, -0.5f, +0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}},
+			{{-0.5f, -0.5f, +0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}},
+			{{-0.5f, +0.5f, +0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+			{{+0.5f, +0.5f, +0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
 
-			{{-0.5f, -0.5f, +0.5f}},
-			{{-0.5f, -0.5f, -0.5f}},
-			{{-0.5f, +0.5f, -0.5f}},
-			{{-0.5f, +0.5f, +0.5f}},
+			{{-0.5f, -0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+			{{-0.5f, -0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+			{{-0.5f, +0.5f, -0.5f}, {-1.0f, 0.0f, 0.0f}, {1.0f, 1.0f}},
+			{{-0.5f, +0.5f, +0.5f}, {-1.0f, 0.0f, 0.0f}, {0.0f, 1.0f}},
 
-			{{-0.5f, -0.5f, +0.5f}},
-			{{+0.5f, -0.5f, +0.5f}},
-			{{+0.5f, -0.5f, -0.5f}},
-			{{-0.5f, -0.5f, -0.5f}},
+			{{-0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 0.0f}},
+			{{+0.5f, -0.5f, +0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 0.0f}},
+			{{+0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {1.0f, 1.0f}},
+			{{-0.5f, -0.5f, -0.5f}, {0.0f, -1.0f, 0.0f}, {0.0f, 1.0f}},
 
-			{{-0.5f, +0.5f, -0.5f}},
-			{{+0.5f, +0.5f, -0.5f}},
-			{{+0.5f, +0.5f, +0.5f}},
-			{{-0.5f, +0.5f, +0.5f}},
+			{{-0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+			{{+0.5f, +0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+			{{+0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}},
+			{{-0.5f, +0.5f, +0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}},
 		};
 
 		std::vector<uint32_t> indices = {
@@ -538,6 +670,8 @@ void initialize() {
 	models.emplace_back(Model{
 		.mesh = plane_mesh,
 		.transform = Transform{},
+		.texture = missing_texture,
+		.sampler = missing_texture_sampler,
 		.albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f}
 	});
 
@@ -546,6 +680,8 @@ void initialize() {
 		.transform = Transform{
 			.position = {-2.0f, -0.5f, -1.5f},
 		},
+		.texture = texture,
+		.sampler = texture_sampler,
 		.albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
 	});
 
@@ -554,6 +690,8 @@ void initialize() {
 		.transform = Transform{
 			.position = {1.5f, -0.5f, -0.5f},
 		},
+		.texture = texture,
+		.sampler = texture_sampler,
 		.albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
 	});
 
@@ -562,6 +700,8 @@ void initialize() {
 		.transform = Transform{
 			.position = {0.0f, -0.5f, 1.0f},
 		},
+		.texture = texture,
+		.sampler = texture_sampler,
 		.albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
 	});
 }
@@ -569,6 +709,12 @@ void initialize() {
 // NOTE: Destroy resources here, do not cause leaks in your program!
 void shutdown() {
 	VkDevice& device = veekay::app.vk_device;
+
+	vkDestroySampler(device, texture_sampler, nullptr);
+	delete texture;
+
+	vkDestroySampler(device, missing_texture_sampler, nullptr);
+	delete missing_texture;
 
 	delete cube_mesh.index_buffer;
 	delete cube_mesh.vertex_buffer;
@@ -591,6 +737,37 @@ void shutdown() {
 void update(double time) {
 	ImGui::Begin("Controls:");
 	ImGui::End();
+
+	if (!ImGui::IsWindowHovered()) {
+		using namespace veekay::input;
+
+		if (mouse::isButtonDown(mouse::Button::left)) {
+			auto view = camera.view();
+
+			// TODO: Calculate right, up and front from view matrix
+			veekay::vec3 right = {1.0f, 0.0f, 0.0f};
+			veekay::vec3 up = {0.0f, -1.0f, 0.0f};
+			veekay::vec3 front = {0.0f, 0.0f, 1.0f};
+
+			if (keyboard::isKeyDown(keyboard::Key::w))
+				camera.position += front * 0.1f;
+
+			if (keyboard::isKeyDown(keyboard::Key::s))
+				camera.position -= front * 0.1f;
+
+			if (keyboard::isKeyDown(keyboard::Key::d))
+				camera.position += right * 0.1f;
+
+			if (keyboard::isKeyDown(keyboard::Key::a))
+				camera.position -= left * 0.1f;
+
+			if (keyboard::isKeyDown(keyboard::Key::q))
+				camera.position += up * 0.1f;
+
+			if (keyboard::isKeyDown(keyboard::Key::z))
+				camera.position -= up * 0.1f;
+		}
+	}
 
 	float aspect_ratio = float(veekay::app.window_width) / float(veekay::app.window_height);
 	SceneUniforms scene_uniforms{
@@ -650,11 +827,25 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 	vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 	VkDeviceSize zero_offset = 0;
 
-	for (size_t i = 0, n = models.size(); i < n; ++i) {
-		const Mesh& mesh = models[i].mesh;
+	VkBuffer current_vertex_buffer = VK_NULL_HANDLE;
+	VkBuffer current_index_buffer = VK_NULL_HANDLE;
+	VkImageView current_texture = VK_NULL_HANDLE;
+	VkSampler current_sampler = VK_NULL_HANDLE;
 
-		vkCmdBindVertexBuffers(cmd, 0, 1, &mesh.vertex_buffer->buffer, &zero_offset);
-		vkCmdBindIndexBuffer(cmd, mesh.index_buffer->buffer, zero_offset, VK_INDEX_TYPE_UINT32);
+
+	for (size_t i = 0, n = models.size(); i < n; ++i) {
+		const Model& model = models[i];
+		const Mesh& mesh = model.mesh;
+
+		if (current_vertex_buffer != mesh.vertex_buffer->buffer) {
+			current_vertex_buffer = mesh.vertex_buffer->buffer;
+			vkCmdBindVertexBuffers(cmd, 0, 1, &current_vertex_buffer, &zero_offset);
+		}
+
+		if (current_index_buffer != mesh.index_buffer->buffer) {
+			current_index_buffer = mesh.index_buffer->buffer;
+			vkCmdBindIndexBuffer(cmd, current_index_buffer, zero_offset, VK_INDEX_TYPE_UINT32);
+		}
 
 		uint32_t offset = i * sizeof(ModelUniforms);
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,

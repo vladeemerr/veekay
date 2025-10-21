@@ -140,7 +140,12 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 
 		vkb::PhysicalDeviceSelector physical_device_selector(instance);
 
+		VkPhysicalDeviceFeatures device_features{
+			.samplerAnisotropy = true,
+		};
+
 		auto selector_result = physical_device_selector.set_surface(vk_surface)
+		                                               .set_required_features(device_features)
 		                                               .select();
 		if (!selector_result) {
 			std::cerr << selector_result.error().message() << '\n';
@@ -609,7 +614,45 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		}
 	}
 
-	app_info.init();
+	VkCommandBuffer onetime_command_buffer; {
+		VkCommandBufferAllocateInfo info{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = vk_command_pool,
+			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1,
+		};
+
+		if (vkAllocateCommandBuffers(vk_device, &info, &onetime_command_buffer) != VK_SUCCESS) {
+			std::cerr << "Failed to allocate Vulkan one-time command buffers\n";
+			return 1;
+		}
+	}
+
+	{
+		VkCommandBufferBeginInfo info{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+		};
+
+		vkBeginCommandBuffer(onetime_command_buffer, &info);
+	}
+
+	app_info.init(onetime_command_buffer);
+
+	{
+		vkEndCommandBuffer(onetime_command_buffer);
+
+		VkSubmitInfo info{
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.commandBufferCount = 1,
+			.pCommandBuffers = &onetime_command_buffer,
+		};
+
+		vkQueueSubmit(vk_graphics_queue, 1, &info, VK_NULL_HANDLE);
+		vkQueueWaitIdle(vk_graphics_queue);
+
+		vkFreeCommandBuffers(vk_device, vk_command_pool, 1, &onetime_command_buffer);
+	}
 
 	while (veekay::app.running && !glfwWindowShouldClose(window)) {
 		veekay::input::cache();

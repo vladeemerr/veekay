@@ -4,7 +4,7 @@
 
 namespace veekay {
 
-typedef void (*InitFunc)();
+typedef void (*InitFunc)(VkCommandBuffer);
 typedef void (*ShutdownFunc)();
 typedef void (*UpdateFunc)(double time);
 typedef void (*RenderFunc)(VkCommandBuffer, VkFramebuffer);
