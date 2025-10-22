@@ -19,9 +19,21 @@ union vec2 {
 		return *this;
 	}
 
+	vec2& operator+=(float scalar) {
+		x += scalar;
+		y += scalar;
+		return *this;
+	}
+
 	vec2& operator-=(const vec2& other) {
 		x -= other.x;
 		y -= other.y;
+		return *this;
+	}
+
+	vec2& operator-=(float scalar) {
+		x -= scalar;
+		y -= scalar;
 		return *this;
 	}
 
@@ -31,9 +43,21 @@ union vec2 {
 		return *this;
 	}
 
+	vec2& operator*=(float scalar) {
+		x *= scalar;
+		y *= scalar;
+		return *this;
+	}
+
 	vec2& operator/=(const vec2& other) {
 		x /= other.x;
 		y /= other.y;
+		return *this;
+	}
+
+	vec2& operator/=(float scalar) {
+		x /= scalar;
+		y /= scalar;
 		return *this;
 	}
 
@@ -42,9 +66,23 @@ union vec2 {
 		return result += other;
 	}
 
+	vec2 operator+(float scalar) const {
+		vec2 result = *this;
+		return result += scalar;
+	}
+
 	vec2 operator-(const vec2& other) const {
 		vec2 result = *this;
 		return result -= other;
+	}
+
+	vec2 operator-(float scalar) const {
+		vec2 result = *this;
+		return result -= scalar;
+	}
+
+	vec2 operator-() const {
+		return {-x, -y};
 	}
 
 	vec2 operator*(const vec2& other) const {
@@ -52,9 +90,19 @@ union vec2 {
 		return result *= other;
 	}
 
+	vec2 operator*(float scalar) const {
+		vec2 result = *this;
+		return result *= scalar;
+	}
+
 	vec2 operator/(const vec2& other) const {
 		vec2 result = *this;
 		return result /= other;
+	}
+
+	vec2 operator/(float scalar) const {
+		vec2 result = *this;
+		return result /= scalar;
 	}
 
 	float& operator[](size_t index) { return elements[index]; }
@@ -77,10 +125,24 @@ union vec3 {
 		return *this;
 	}
 
+	vec3& operator+=(float scalar) {
+		x += scalar;
+		y += scalar;
+		z += scalar;
+		return *this;
+	}
+
 	vec3& operator-=(const vec3& other) {
 		x -= other.x;
 		y -= other.y;
 		z -= other.z;
+		return *this;
+	}
+
+	vec3& operator-=(float scalar) {
+		x -= scalar;
+		y -= scalar;
+		z -= scalar;
 		return *this;
 	}
 
@@ -91,10 +153,24 @@ union vec3 {
 		return *this;
 	}
 
+	vec3& operator*=(float scalar) {
+		x *= scalar;
+		y *= scalar;
+		z *= scalar;
+		return *this;
+	}
+
 	vec3& operator/=(const vec3& other) {
 		x /= other.x;
 		y /= other.y;
 		z /= other.z;
+		return *this;
+	}
+
+	vec3& operator/=(float scalar) {
+		x /= scalar;
+		y /= scalar;
+		z /= scalar;
 		return *this;
 	}
 
@@ -103,9 +179,19 @@ union vec3 {
 		return result += other;
 	}
 
+	vec3 operator+(float scalar) const {
+		vec3 result = *this;
+		return result += scalar;
+	}
+
 	vec3 operator-(const vec3& other) const {
 		vec3 result = *this;
 		return result -= other;
+	}
+
+	vec3 operator-(float scalar) const {
+		vec3 result = *this;
+		return result -= scalar;
 	}
 
 	vec3 operator-() const { return {-x, -y, -z}; }
@@ -115,9 +201,51 @@ union vec3 {
 		return result *= other;
 	}
 
+	vec3 operator*(float scalar) const {
+		vec3 result = *this;
+		return result *= scalar;
+	}
+
 	vec3 operator/(const vec3& other) const {
 		vec3 result = *this;
 		return result /= other;
+	}
+
+	vec3 operator/(float scalar) const {
+		vec3 result = *this;
+		return result /= scalar;
+	}
+
+	static float dot(const vec3& lhs, const vec3& rhs) {
+		return lhs.x * rhs.x + lhs.y * rhs.y + lhs.z * rhs.z;
+	}
+
+	static float squaredLength(const vec3& vector) {
+		return dot(vector, vector);
+	}
+
+	static float length(const vec3& vector) {
+		return std::sqrt(squaredLength(vector));
+	}
+
+	static vec3 normalized(const vec3& vector) {
+		vec3 result = vector;
+
+		float len = length(vector);
+
+		result.x /= len;
+		result.y /= len;
+		result.z /= len;
+
+		return result;
+	}
+
+	static vec3 cross(const vec3& lhs, const vec3& rhs) {
+		return {
+			(lhs.y * rhs.z) - (lhs.z * rhs.y),
+			(lhs.z * rhs.x) - (lhs.x * rhs.z),
+			(lhs.x * rhs.y) - (lhs.y * rhs.x)
+		};
 	}
 
 	float& operator[](size_t index) { return elements[index]; }

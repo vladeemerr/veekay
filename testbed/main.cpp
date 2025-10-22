@@ -53,8 +53,6 @@ struct Transform {
 struct Model {
 	Mesh mesh;
 	Transform transform;
-	veekay::graphics::Texture* texture;
-	VkSampler sampler;
 	veekay::vec3 albedo_color;
 };
 
@@ -506,14 +504,15 @@ void initialize(VkCommandBuffer cmd) {
 		nullptr,
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
+	// NOTE: This texture and sampler is used when texture could not be loaded
 	{
 		VkSamplerCreateInfo info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
 			.magFilter = VK_FILTER_NEAREST,
 			.minFilter = VK_FILTER_NEAREST,
 			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
+			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
 			.mipLodBias = 0.0f,
 			.anisotropyEnable = false,
@@ -542,46 +541,11 @@ void initialize(VkCommandBuffer cmd) {
 		                                                pixels);
 	}
 
-	{
-		VkSamplerCreateInfo info{
-			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-			.magFilter = VK_FILTER_LINEAR,
-			.minFilter = VK_FILTER_LINEAR,
-			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-			.addressModeU = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.addressModeV = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.mipLodBias = 0.0f,
-			.anisotropyEnable = true,
-			.maxAnisotropy = 16.0f,
-			.compareEnable = false,
-			.compareOp = VK_COMPARE_OP_ALWAYS,
-			.minLod = 0.0f,
-			.maxLod = 0.0f,
-			.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
-			.unnormalizedCoordinates = false,
-		};
-
-		if (vkCreateSampler(device, &info, nullptr, &texture_sampler) != VK_SUCCESS) {
-			std::cerr << "Failed to create Vulkan texture sampler\n";
-			veekay::app.running = false;
-			return;
-		}
-
-		uint32_t width, height;
-		std::vector<uint8_t> pixels;
-		auto error = lodepng::decode(pixels, width, height, "./assets/lenna.png");
-		if (!error) {
-			texture = new veekay::graphics::Texture(cmd, width, height,
-			                                        VK_FORMAT_R8G8B8A8_UNORM,
-			                                        pixels.data());
-
-			updateDescriptors(*texture, texture_sampler);
-		} else {
-			updateDescriptors(*missing_texture, missing_texture_sampler);
-		}
+	if (texture != nullptr && texture_sampler != nullptr) {
+		updateDescriptors(*texture, texture_sampler);
+	} else {
+		updateDescriptors(*missing_texture, missing_texture_sampler);
 	}
-
 	
 	// NOTE: Plane mesh initialization
 	{
@@ -670,8 +634,6 @@ void initialize(VkCommandBuffer cmd) {
 	models.emplace_back(Model{
 		.mesh = plane_mesh,
 		.transform = Transform{},
-		.texture = missing_texture,
-		.sampler = missing_texture_sampler,
 		.albedo_color = veekay::vec3{1.0f, 1.0f, 1.0f}
 	});
 
@@ -680,8 +642,6 @@ void initialize(VkCommandBuffer cmd) {
 		.transform = Transform{
 			.position = {-2.0f, -0.5f, -1.5f},
 		},
-		.texture = texture,
-		.sampler = texture_sampler,
 		.albedo_color = veekay::vec3{1.0f, 0.0f, 0.0f}
 	});
 
@@ -690,8 +650,6 @@ void initialize(VkCommandBuffer cmd) {
 		.transform = Transform{
 			.position = {1.5f, -0.5f, -0.5f},
 		},
-		.texture = texture,
-		.sampler = texture_sampler,
 		.albedo_color = veekay::vec3{0.0f, 1.0f, 0.0f}
 	});
 
@@ -700,8 +658,6 @@ void initialize(VkCommandBuffer cmd) {
 		.transform = Transform{
 			.position = {0.0f, -0.5f, 1.0f},
 		},
-		.texture = texture,
-		.sampler = texture_sampler,
 		.albedo_color = veekay::vec3{0.0f, 0.0f, 1.0f}
 	});
 }
@@ -759,7 +715,7 @@ void update(double time) {
 				camera.position += right * 0.1f;
 
 			if (keyboard::isKeyDown(keyboard::Key::a))
-				camera.position -= left * 0.1f;
+				camera.position -= right * 0.1f;
 
 			if (keyboard::isKeyDown(keyboard::Key::q))
 				camera.position += up * 0.1f;
@@ -829,9 +785,6 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 
 	VkBuffer current_vertex_buffer = VK_NULL_HANDLE;
 	VkBuffer current_index_buffer = VK_NULL_HANDLE;
-	VkImageView current_texture = VK_NULL_HANDLE;
-	VkSampler current_sampler = VK_NULL_HANDLE;
-
 
 	for (size_t i = 0, n = models.size(); i < n; ++i) {
 		const Model& model = models[i];
