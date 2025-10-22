@@ -160,65 +160,6 @@ VkShaderModule loadShaderModule(const char* path) {
 	return result;
 }
 
-void updateDescriptors(const veekay::graphics::Texture& texture,
-                       const VkSampler sampler) {
-	VkDevice& device = veekay::app.vk_device;
-
-	VkDescriptorBufferInfo buffer_infos[] = {
-		{
-			.buffer = scene_uniforms_buffer->buffer,
-			.offset = 0,
-			.range = sizeof(SceneUniforms),
-		},
-		{
-			.buffer = model_uniforms_buffer->buffer,
-			.offset = 0,
-			.range = sizeof(ModelUniforms),
-		},
-	};
-
-	VkDescriptorImageInfo image_infos[] = {
-		{
-			.sampler = sampler,
-			.imageView = texture.view,
-			.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-		},
-	};
-
-	VkWriteDescriptorSet write_infos[] = {
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descriptor_set,
-			.dstBinding = 0,
-			.dstArrayElement = 0,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			.pBufferInfo = &buffer_infos[0],
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descriptor_set,
-			.dstBinding = 1,
-			.dstArrayElement = 0,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
-			.pBufferInfo = &buffer_infos[1],
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-			.dstSet = descriptor_set,
-			.dstBinding = 2,
-			.dstArrayElement = 0,
-			.descriptorCount = 1,
-			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-			.pImageInfo = &image_infos[0],
-		},
-	};
-
-	vkUpdateDescriptorSets(device, sizeof(write_infos) / sizeof(write_infos[0]),
-	                       write_infos, 0, nullptr);
-}
-
 void initialize(VkCommandBuffer cmd) {
 	VkDevice& device = veekay::app.vk_device;
 	VkPhysicalDevice& physical_device = veekay::app.vk_physical_device;
@@ -385,7 +326,7 @@ void initialize(VkCommandBuffer cmd) {
 				{
 					.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 					.descriptorCount = 8,
-				},
+				}
 			};
 			
 			VkDescriptorPoolCreateInfo info{
@@ -417,12 +358,6 @@ void initialize(VkCommandBuffer cmd) {
 					.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
 					.descriptorCount = 1,
 					.stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-				},
-				{
-					.binding = 2,
-					.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-					.descriptorCount = 1,
-					.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
 				},
 			};
 
@@ -508,21 +443,7 @@ void initialize(VkCommandBuffer cmd) {
 	{
 		VkSamplerCreateInfo info{
 			.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-			.magFilter = VK_FILTER_NEAREST,
-			.minFilter = VK_FILTER_NEAREST,
-			.mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-			.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-			.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
 			.addressModeW = VK_SAMPLER_ADDRESS_MODE_CLAMP_TO_EDGE,
-			.mipLodBias = 0.0f,
-			.anisotropyEnable = false,
-			.maxAnisotropy = 0.0f,
-			.compareEnable = false,
-			.compareOp = VK_COMPARE_OP_ALWAYS,
-			.minLod = 0.0f,
-			.maxLod = 0.0f,
-			.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK,
-			.unnormalizedCoordinates = false,
 		};
 
 		if (vkCreateSampler(device, &info, nullptr, &missing_texture_sampler) != VK_SUCCESS) {
@@ -541,12 +462,45 @@ void initialize(VkCommandBuffer cmd) {
 		                                                pixels);
 	}
 
-	if (texture != nullptr && texture_sampler != nullptr) {
-		updateDescriptors(*texture, texture_sampler);
-	} else {
-		updateDescriptors(*missing_texture, missing_texture_sampler);
+	{
+		VkDescriptorBufferInfo buffer_infos[] = {
+			{
+				.buffer = scene_uniforms_buffer->buffer,
+				.offset = 0,
+				.range = sizeof(SceneUniforms),
+			},
+			{
+				.buffer = model_uniforms_buffer->buffer,
+				.offset = 0,
+				.range = sizeof(ModelUniforms),
+			},
+		};
+
+		VkWriteDescriptorSet write_infos[] = {
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = descriptor_set,
+				.dstBinding = 0,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+				.pBufferInfo = &buffer_infos[0],
+			},
+			{
+				.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+				.dstSet = descriptor_set,
+				.dstBinding = 1,
+				.dstArrayElement = 0,
+				.descriptorCount = 1,
+				.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC,
+				.pBufferInfo = &buffer_infos[1],
+			},
+		};
+
+		vkUpdateDescriptorSets(device, sizeof(write_infos) / sizeof(write_infos[0]),
+		                       write_infos, 0, nullptr);
 	}
-	
+
 	// NOTE: Plane mesh initialization
 	{
 		// (v0)------(v1)
@@ -666,9 +620,6 @@ void initialize(VkCommandBuffer cmd) {
 void shutdown() {
 	VkDevice& device = veekay::app.vk_device;
 
-	vkDestroySampler(device, texture_sampler, nullptr);
-	delete texture;
-
 	vkDestroySampler(device, missing_texture_sampler, nullptr);
 	delete missing_texture;
 
@@ -698,6 +649,10 @@ void update(double time) {
 		using namespace veekay::input;
 
 		if (mouse::isButtonDown(mouse::Button::left)) {
+			auto move_delta = mouse::cursorDelta();
+
+			// TODO: Use mouse_delta to update camera rotation
+			
 			auto view = camera.view();
 
 			// TODO: Calculate right, up and front from view matrix

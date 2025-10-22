@@ -11,9 +11,6 @@ layout (binding = 1, std140) uniform ModelUniforms {
 	vec3 albedo_color;
 };
 
-layout (binding = 2) uniform sampler2D textures[1];
-
 void main() {
-	vec4 texel = texture(textures[0], f_uv);
-	final_color = vec4(texel.rgb, 1.0f);
+	final_color = vec4(albedo_color, 1.0f);
 }
