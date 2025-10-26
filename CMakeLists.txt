@@ -3,14 +3,16 @@ include(FetchContent)
 
 project(veekay LANGUAGES C CXX)
 
-add_library(${PROJECT_NAME} source/veekay.cpp)
+add_library(${PROJECT_NAME} source/veekay.cpp source/input.cpp source/graphics.cpp)
 
 target_include_directories(${PROJECT_NAME} PUBLIC
-    $<BUILD_INTERFACE:${veekay_SOURCE_DIR}/include>
-    $<INSTALL_INTERFACE:include>
+	$<BUILD_INTERFACE:${veekay_SOURCE_DIR}/include>
+	$<INSTALL_INTERFACE:include>
 )
 
 if(LINUX)
+	target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
+elseif(APPLE)
 	target_compile_options(${PROJECT_NAME} PRIVATE -Wall -Wextra -Wno-missing-field-initializers)
 elseif(MSVC)
 	target_compile_options(${PROJECT_NAME} PRIVATE /W4)

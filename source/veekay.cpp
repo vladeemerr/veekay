@@ -66,8 +66,18 @@ std::vector<VkCommandBuffer> vk_command_buffers;
 
 } // namespace
 
-// NOTE: Global application state definition
-veekay::Application veekay::app;
+namespace veekay {
+
+Application app;
+
+namespace input {
+
+void setup(void* const window_ptr);
+void cache();
+
+} // namespace input
+
+} // namespace veekay
 
 int veekay::run(const veekay::ApplicationInfo& app_info) {
 	veekay::app.running = true;
@@ -87,8 +97,22 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		return 1;
 	}
 
-	veekay::app.window_width = window_default_width;
-	veekay::app.window_height = window_default_height;
+	veekay::input::setup(window);
+
+	/* NOTE:
+		needed because otherwise on macos everything will be rendered in the top
+		corner of the application window
+	*/
+#if defined(__APPLE__) && defined(__MACH__)
+	int framebuffer_width, framebuffer_height;
+	glfwGetFramebufferSize(window, &framebuffer_width, &framebuffer_height);
+
+	app.window_width = framebuffer_width;
+	app.window_height = framebuffer_height;
+#else
+	app.window_width = window_default_width;
+	app.window_height = window_default_height;
+#endif
 
 	{ // NOTE: Initialize Vulkan: grab device and create swapchain
 		vkb::InstanceBuilder instance_builder;
@@ -116,7 +140,12 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 
 		vkb::PhysicalDeviceSelector physical_device_selector(instance);
 
+		VkPhysicalDeviceFeatures device_features{
+			.samplerAnisotropy = true,
+		};
+
 		auto selector_result = physical_device_selector.set_surface(vk_surface)
+		                                               .set_required_features(device_features)
 		                                               .select();
 		if (!selector_result) {
 			std::cerr << selector_result.error().message() << '\n';
@@ -157,7 +186,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 
 		auto swapchain_result = swapchain_builder.set_desired_format(surface_format)
 		                                         .set_desired_present_mode(VK_PRESENT_MODE_FIFO_KHR)
-		                                         .set_desired_extent(window_default_width, window_default_height)
+		                                         .set_desired_extent(app.window_width, app.window_height)
 		                                         .add_image_usage_flags(VK_IMAGE_USAGE_TRANSFER_DST_BIT)
 		                                         .build();
 
@@ -258,8 +287,8 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 				.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 				.renderPass = imgui_render_pass,
 				.attachmentCount = 1,
-				.width = window_default_width,
-				.height = window_default_height,
+				.width = app.window_width,
+				.height = app.window_height,
 				.layers = 1,
 			};
 
@@ -349,7 +378,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			.sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
 			.imageType = VK_IMAGE_TYPE_2D,
 			.format = vk_image_depth_format,
-			.extent = {window_default_width, window_default_height, 1},
+			.extent = {app.window_width, app.window_height, 1},
 			.mipLevels = 1,
 			.arrayLayers = 1,
 			.samples = VK_SAMPLE_COUNT_1_BIT,
@@ -513,8 +542,8 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 			.attachmentCount = 2,
 			.pAttachments = attachments,
 
-			.width = window_default_width,
-			.height = window_default_height,
+			.width = app.window_width,
+			.height = app.window_height,
 			.layers = 1,
 		};
 
@@ -585,9 +614,49 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		}
 	}
 
-	app_info.init();
+	VkCommandBuffer onetime_command_buffer; {
+		VkCommandBufferAllocateInfo info{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+			.commandPool = vk_command_pool,
+			.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+			.commandBufferCount = 1,
+		};
+
+		if (vkAllocateCommandBuffers(vk_device, &info, &onetime_command_buffer) != VK_SUCCESS) {
+			std::cerr << "Failed to allocate Vulkan one-time command buffers\n";
+			return 1;
+		}
+	}
+
+	{
+		VkCommandBufferBeginInfo info{
+			.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+			.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+		};
+
+		vkBeginCommandBuffer(onetime_command_buffer, &info);
+	}
+
+	app_info.init(onetime_command_buffer);
+
+	{
+		vkEndCommandBuffer(onetime_command_buffer);
+
+		VkSubmitInfo info{
+			.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+			.commandBufferCount = 1,
+			.pCommandBuffers = &onetime_command_buffer,
+		};
+
+		vkQueueSubmit(vk_graphics_queue, 1, &info, VK_NULL_HANDLE);
+		vkQueueWaitIdle(vk_graphics_queue);
+
+		vkFreeCommandBuffers(vk_device, vk_command_pool, 1, &onetime_command_buffer);
+	}
 
 	while (veekay::app.running && !glfwWindowShouldClose(window)) {
+		veekay::input::cache();
+		
 		glfwPollEvents();
 		double time = glfwGetTime();
 
@@ -632,7 +701,7 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 					.renderPass = imgui_render_pass,
 					.framebuffer = imgui_framebuffers[swapchain_image_index],
 					.renderArea = {
-						.extent = {window_default_width, window_default_height},
+						.extent = {app.window_width, app.window_height},
 					},
 				};
 

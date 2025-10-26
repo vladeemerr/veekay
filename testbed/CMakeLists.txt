@@ -9,7 +9,22 @@ set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD_REQUIRED TRUE CXX_
 
 find_package(Vulkan REQUIRED)
 
+FetchContent_Declare(
+	lodepng
+	GIT_REPOSITORY https://github.com/lvandeve/lodepng
+)
+
+FetchContent_MakeAvailable(lodepng)
+
 target_link_libraries(${PROJECT_NAME} veekay Vulkan::Headers)
+
+target_sources(${PROJECT_NAME} PRIVATE
+	${lodepng_SOURCE_DIR}/lodepng.cpp
+)
+
+target_include_directories(${PROJECT_NAME} PRIVATE
+	${lodepng_SOURCE_DIR}
+)
 
 # Compile shaders
 find_program(GLSLC_FOUND glslc)
