@@ -55,9 +55,3 @@ if(GLSLC_FOUND)
 	add_custom_target(shaders DEPENDS ${_SHADER_BINARIES})
 	add_dependencies(${PROJECT_NAME} shaders)
 endif()
-add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory
-   	${CMAKE_SOURCE_DIR}/shaders
-    $<TARGET_FILE_DIR:${PROJECT_NAME}>/shaders
-    COMMENT "Copying shaders to output directory"
-)
