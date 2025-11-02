@@ -10,6 +10,12 @@
 
 namespace veekay::graphics {
 
+namespace {
+
+	size_t min_uniform_buffer_offset_alignment;
+
+} // namespace
+
 Buffer::Buffer(size_t size, const void* data,
                VkBufferUsageFlags usage) {
 	VkDevice& device = veekay::app.vk_device;
@@ -84,6 +90,13 @@ Buffer::~Buffer() {
 
 	vkFreeMemory(device, memory, nullptr);
 	vkDestroyBuffer(device, buffer, nullptr);
+}
+
+size_t Buffer::structureAlignment(size_t struct_size) {
+	const size_t alignment = min_uniform_buffer_offset_alignment;
+
+	return alignment > 0 ? ((struct_size + alignment - 1) & ~(alignment - 1))
+	                     : struct_size;
 }
 
 Texture::Texture(VkCommandBuffer cmd,
@@ -352,6 +365,16 @@ Texture::~Texture() {
 	vkFreeMemory(device, memory, nullptr);
 	vkDestroyImageView(device, view, nullptr);
 	vkDestroyImage(device, image, nullptr);
+}
+
+void init() {
+	VkDevice& device = veekay::app.vk_device;
+	VkPhysicalDevice& physical_device = veekay::app.vk_physical_device;
+
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties(physical_device, &props);
+
+	min_uniform_buffer_offset_alignment = props.limits.minUniformBufferOffsetAlignment;
 }
 
 } // namespace veekay::graphics

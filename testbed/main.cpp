@@ -1,18 +1,15 @@
-#include "veekay/input.hpp"
 #include <cstdint>
 #include <climits>
+#include <cstring>
 #include <vector>
 #include <iostream>
 #include <fstream>
-
-#define _USE_MATH_DEFINES
-#include <math.h>
+#include <cmath>
 
 #include <veekay/veekay.hpp>
 
-#include <imgui.h>
 #include <vulkan/vulkan_core.h>
-
+#include <imgui.h>
 #include <lodepng.h>
 
 namespace {
@@ -435,7 +432,7 @@ void initialize(VkCommandBuffer cmd) {
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
 	model_uniforms_buffer = new veekay::graphics::Buffer(
-		max_models * sizeof(ModelUniforms),
+		max_models * veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms)),
 		nullptr,
 		VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT);
 
@@ -695,9 +692,16 @@ void update(double time) {
 	}
 
 	*(SceneUniforms*)scene_uniforms_buffer->mapped_region = scene_uniforms;
-	std::copy(model_uniforms.begin(),
-	          model_uniforms.end(),
-	          static_cast<ModelUniforms*>(model_uniforms_buffer->mapped_region));
+
+	const size_t alignment =
+		veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+
+	for (size_t i = 0, n = model_uniforms.size(); i < n; ++i) {
+		const ModelUniforms& uniforms = model_uniforms[i];
+
+		char* const pointer = static_cast<char*>(model_uniforms_buffer->mapped_region) + i * alignment;
+		*reinterpret_cast<ModelUniforms*>(pointer) = uniforms;
+	}
 }
 
 void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
@@ -741,6 +745,9 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 	VkBuffer current_vertex_buffer = VK_NULL_HANDLE;
 	VkBuffer current_index_buffer = VK_NULL_HANDLE;
 
+	const size_t model_uniorms_alignment =
+		veekay::graphics::Buffer::structureAlignment(sizeof(ModelUniforms));
+
 	for (size_t i = 0, n = models.size(); i < n; ++i) {
 		const Model& model = models[i];
 		const Mesh& mesh = model.mesh;
@@ -755,7 +762,7 @@ void render(VkCommandBuffer cmd, VkFramebuffer framebuffer) {
 			vkCmdBindIndexBuffer(cmd, current_index_buffer, zero_offset, VK_INDEX_TYPE_UINT32);
 		}
 
-		uint32_t offset = i * sizeof(ModelUniforms);
+		uint32_t offset = i * model_uniorms_alignment;
 		vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout,
 		                    0, 1, &descriptor_set, 1, &offset);
 

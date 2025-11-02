@@ -1,7 +1,7 @@
 #include <cstdint>
 #include <climits>
-#include <iostream>
 
+#include <iostream>
 #include <vector>
 
 #include <vulkan/vulkan_core.h>
@@ -68,14 +68,20 @@ std::vector<VkCommandBuffer> vk_command_buffers;
 
 namespace veekay {
 
-Application app;
+	Application app;
 
-namespace input {
+	namespace input {
 
-void setup(void* const window_ptr);
-void cache();
+		void setup(void* const window_ptr);
+		void cache();
 
-} // namespace input
+	} // namespace input
+
+	namespace graphics {
+
+		void init();
+
+	} // namespace graphics
 
 } // namespace veekay
 
@@ -204,6 +210,8 @@ int veekay::run(const veekay::ApplicationInfo& app_info) {
 		veekay::app.vk_device = vk_device;
 		veekay::app.vk_physical_device = vk_physical_device;
 	}
+
+	graphics::init();
 
 	{ // NOTE: ImGui initialization
 		IMGUI_CHECKVERSION();
